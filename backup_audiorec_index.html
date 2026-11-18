@@ -1,0 +1,1790 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VISUAL TRANSLATOR</title>
+<style>
+  /* ===== デザイントークン: 色はここに集める。アクセントは水色1色だけ ===== */
+  :root {
+    --bg: #121212;        /* アプリ全体の背景 */
+    --panel: #1a1a1a;     /* サイドバー */
+    --card: #1e1e1e;     /* セクションのカード */
+    --line: #2c2c2c;      /* 境界線(1px) */
+    --text: #e6e6e6;
+    --dim: #8b8b8b;
+    --accent: #00d4ff;    /* アクセント(録画・スライダーのつまみ・選択中) */
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); overflow: hidden;
+         font: 12px/1.4 "Inter", "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif; }
+
+  /* ===== 全体: 左サイドバー(固定幅) + 右メイン(残り全部)。画面(100vh)に収める ===== */
+  .app { display: flex; height: 100vh; }
+  .sidebar { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto;
+             padding: 16px; display: flex; flex-direction: column; gap: 12px;
+             font-size: 14px; }   /* 左パネルの基本の文字サイズ(ボタンやセレクトもこれを引き継ぐ) */
+  .sidebar::-webkit-scrollbar { width: 10px; }
+  .sidebar::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+  .brand { font-weight: 700; letter-spacing: .16em; font-size: 14px; display: flex; align-items: center; gap: 8px; padding: 2px 2px 4px; }
+  .brand i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+  /* ===== セクションのカード ===== */
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px 16px; }
+  .card h2 { margin: 0 0 14px; font-size: 12px; font-weight: 600; letter-spacing: .14em; color: var(--dim); }
+  .field { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+  .field:first-of-type { margin-top: 0; }
+
+  /* ===== ボタン ===== */
+  button, .btn { font: inherit; color: var(--text); background: #262626; border: 1px solid #353535; border-radius: 8px;
+                 padding: 10px 14px; cursor: pointer; transition: background .15s, border-color .15s, transform .05s; }
+  button:hover:not(:disabled), .btn:hover { background: #2f2f2f; border-color: #4a4a4a; }
+  button:active:not(:disabled) { transform: scale(.97); }
+  button:disabled { opacity: .35; cursor: not-allowed; }
+  .btn.file { display: block; text-align: center; border-style: dashed; }
+  .btn.file input { display: none; }
+  #fileName { display: block; margin-top: 6px; color: var(--dim); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row3 { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 8px; margin-top: 14px; }
+  #recBtn { background: var(--accent); border-color: var(--accent); color: #001018; font-weight: 700; }
+  #recBtn:hover:not(:disabled) { background: #39deff; border-color: #39deff; box-shadow: 0 0 12px rgba(0,212,255,.45); }
+
+  /* 元動画(小さく表示。Vキーか見出しで隠せる) */
+  .src { margin-top: 14px; }
+  .src .toggle { background: none; border: 0; padding: 0; color: var(--dim); font-size: 13px; cursor: pointer; }
+  .src .toggle:hover:not(:disabled) { background: none; color: var(--text); }
+  .src video { display: block; width: 100%; max-height: 150px; margin-top: 8px; background: #000; border-radius: 6px; }
+  /* 隠すときは display:none にしない(映像の読み取りが止まるのを避けるため、1pxの透明にして残す) */
+  .src.collapsed video { width: 2px; height: 2px; margin: 0; opacity: 0; pointer-events: none; }
+
+  /* ===== キーボードショートカットのバッジ(キーキャップ風) ===== */
+  kbd { font: 10px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--dim); background: #222;
+        border: 1px solid #3a3a3a; border-bottom-width: 2px; border-radius: 4px; padding: 2px 5px; margin-left: 5px; white-space: nowrap; }
+  #recBtn kbd { color: #001018; background: rgba(0,16,24,.12); border-color: rgba(0,16,24,.4); }
+  .sidebar kbd { font-size: 12px; padding: 3px 7px; }       /* 左パネルのキーバッジだけ大きく(右の再生バーは元のまま) */
+  .keys { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; color: var(--dim); font-size: 13px; }
+  .keys kbd { margin: 0 4px 0 0; }
+  .keys span.on { color: var(--accent); }                 /* いま選ばれているモード */
+  .keys span.on kbd { color: var(--accent); border-color: var(--accent); }
+
+  .hint { margin-top: 10px; color: var(--dim); font-size: 12px; line-height: 1.45; }
+
+  /* ===== 読み込みエラーの案内(プレビューの上に重ねて表示) ===== */
+  .notice { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); z-index: 3;
+            width: min(560px, calc(100% - 40px)); background: #2a1717; border: 1px solid #ff5d5d;
+            border-radius: var(--radius); padding: 12px 14px; box-shadow: 0 10px 40px rgba(0,0,0,.6); }
+  .notice[hidden] { display: none; }
+  .notice p { margin: 0 0 6px; font-weight: 600; line-height: 1.5; }
+  .notice small { display: block; color: #d9a8a8; font-size: 11px; word-break: break-all; }
+  .notice button { margin-top: 10px; }
+
+  /* ===== 録画中: プレビュー枠を赤く脈打たせる ===== */
+  .rec-badge { display: none; position: absolute; top: 22px; left: 26px; color: #ff4b4b; font-weight: 700; letter-spacing: .1em; font-size: 11px;
+               animation: recPulse 1s infinite; z-index: 1; }
+  .viewport { position: relative; }
+  .viewport.recording .rec-badge { display: block; }
+  .viewport.recording canvas { border-color: #ff3b3b; animation: recGlow 1s infinite; }
+  @keyframes recPulse { 50% { opacity: .3; } }
+  @keyframes recGlow { 0%, 100% { box-shadow: 0 0 0 1px #ff3b3b, 0 0 14px rgba(255,59,59,.55); }
+                       50%      { box-shadow: 0 0 0 1px #ff3b3b, 0 0 34px rgba(255,59,59,.9); } }
+
+  /* ===== プリセット: 3つ横並び ===== */
+  .presets { display: grid; grid-template-columns: 1fr; gap: 6px; }
+  .preset { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 9px 12px; }
+  .preset b { font-size: 14px; }
+  .preset small { font-size: 11px; color: var(--dim); line-height: 1.25; }
+  .preset.active { background: rgba(0,212,255,.14); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .preset.active b { color: var(--accent); }
+
+  /* ===== 鍵アイコン(ロック) ===== */
+  .lbl { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+  .card h2.split { display: flex; justify-content: space-between; align-items: center; }
+  .linkbtn { background: none; border: 0; padding: 0; color: var(--accent); font-size: 12px; letter-spacing: .04em; cursor: pointer; }
+  .linkbtn:hover:not(:disabled) { background: none; text-decoration: underline; }
+  /* 開いた鍵(初期状態): 薄いグレー・枠線なし。シャッフルの対象になる */
+  .lock { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; padding: 0;
+          background: none; border: 1px solid transparent; border-radius: 6px; color: #5d5d5d; cursor: pointer; }
+  .lock:hover:not(:disabled) { background: #262626; border-color: transparent; color: #a0a0a0; }
+  .lock svg { display: block; width: 17px; height: 17px; }
+  .lock .i-closed { display: none; }
+  /* 閉じた鍵(ロック中): アクセントカラーで光る。シャッフルの対象外 */
+  .lock.locked { color: var(--accent); border-color: var(--accent); background: rgba(0,212,255,.12); box-shadow: 0 0 8px rgba(0,212,255,.35); }
+  .lock.locked:hover:not(:disabled) { background: rgba(0,212,255,.22); color: var(--accent); border-color: var(--accent); }
+  .lock.locked .i-open { display: none; }
+  .lock.locked .i-closed { display: block; }
+
+  /* ===== 動画ファイル選択 + DEMO / SHUFFLE + UNDO を横並びにする ===== */
+  .srcrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .srcrow .btn, .srcrow button { padding: 10px 8px; font-size: 13px; white-space: nowrap; }
+  .shufrow { display: grid; grid-template-columns: 1.3fr 1fr; gap: 8px; margin-top: 12px; }
+  .shufrow button { padding: 10px 8px; margin-top: 0; }
+
+  /* ===== オーディオ・リアクティブ: 低音レベルメーター ===== */
+  .meter { flex: 1; max-width: 60%; height: 10px; background: #2a2a2a; border-radius: 5px; overflow: hidden; transition: opacity .15s; }
+  .meter i { display: block; width: 0; height: 100%; background: linear-gradient(90deg, var(--accent), #8af4ff); }
+  .meter.off { opacity: .35; }                      /* 音連動がOFFのときは薄くする(測定は続ける) */
+
+  /* ===== シャッフル ===== */
+  .shuffle { width: 100%; margin-top: 12px; color: var(--accent); border-color: var(--accent); font-weight: 700; letter-spacing: .06em; }
+  .shuffle:hover:not(:disabled) { background: rgba(0,212,255,.15); }
+  .shuffle.flash { background: var(--accent); color: #001018; }       /* シャッフルした瞬間に、ぴかっと光る */
+  .shuffle kbd { color: var(--accent); border-color: rgba(0,212,255,.5); }
+  #autoInterval { width: 40%; }
+
+  /* ===== セレクト(標準の見た目を消して作り直す) ===== */
+  select { appearance: none; -webkit-appearance: none; width: 60%; font: inherit; color: var(--text); background-color: #262626;
+           border: 1px solid #353535; border-radius: 8px; padding: 9px 32px 9px 12px; cursor: pointer; transition: border-color .15s;
+           background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238b8b8b' stroke-width='1.5'/%3E%3C/svg%3E");
+           background-repeat: no-repeat; background-position: right 12px center; }
+  select:hover, select:focus { border-color: var(--accent); outline: none; }
+
+  /* ===== スイッチ(チェックボックスの代わり) ===== */
+  .switch { position: relative; width: 44px; height: 24px; flex: none; }
+  .switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; z-index: 1; }
+  .switch span { position: absolute; inset: 0; background: #333; border-radius: 12px; transition: background .15s; }
+  .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #bbb; transition: transform .15s, background .15s; }
+  .switch input:checked + span { background: rgba(0,212,255,.35); }
+  .switch input:checked + span::after { transform: translateX(20px); background: var(--accent); }
+
+  /* ===== パラメータ: ラベルは左、数値は右端、その下にスライダー ===== */
+  .param + .param { margin-top: 14px; }
+  .phead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .phead output { color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 600; }
+  /* スライダー: 全体の高さ(つかめる範囲)を20pxにして、中のバー(6px)とつまみ(18px)を別々に指定する */
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 20px; margin: 0;
+                      background: transparent; outline: none; cursor: pointer; }
+  input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px;
+    background: linear-gradient(to right, var(--accent) var(--pct, 50%), #3a3a3a var(--pct, 50%)); }   /* --pct は左側の色づけの長さ(JSが更新) */
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; box-sizing: border-box; width: 18px; height: 18px; margin-top: -6px;
+    border-radius: 50%; background: #fff; border: 2px solid var(--accent); transition: transform .12s, box-shadow .12s; }
+  input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.15); box-shadow: 0 0 10px rgba(0,212,255,.6); }
+  input[type=range]::-moz-range-track { height: 6px; border-radius: 3px;
+    background: linear-gradient(to right, var(--accent) var(--pct, 50%), #3a3a3a var(--pct, 50%)); }
+  input[type=range]::-moz-range-thumb { box-sizing: border-box; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); }
+
+  /* ===== サイドバーの幅: 初期390px。ドラッグで 280px 〜 画面の60% の範囲で変えられる ===== */
+  .sidebar { flex: none; width: 390px; min-width: 280px; max-width: 60vw; border-right: 0; }
+  /* 幅が変わっても、中の部品がきれいに追従するように(狭いときは折り返す) */
+  .field select { flex: 0 1 60%; width: auto; min-width: 0; }
+  .srcrow, .row3 { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+  .srcrow .btn, .srcrow button { white-space: normal; line-height: 1.25; }
+  .shufrow { display: flex; flex-wrap: wrap; }
+  .shufrow .shuffle { flex: 1.3 1 150px; }
+  .shufrow #undoBtn { flex: 1 1 110px; }
+
+  /* ===== 境界のハンドル(ドラッグで左右の幅を変える) ===== */
+  .resizer { flex: none; position: relative; width: 6px; background: var(--line); cursor: col-resize; touch-action: none;
+             transition: background .15s, box-shadow .15s; outline: none; }
+  .resizer::after { content: ""; position: absolute; top: 50%; left: 1px; width: 4px; height: 44px; transform: translateY(-50%);
+                    border-radius: 2px; background: #444; transition: background .15s; }       /* 中央のつまみ(つかめる合図) */
+  .resizer:hover, .resizer.dragging, .resizer:focus-visible { background: var(--accent); box-shadow: 0 0 12px rgba(0,212,255,.65); }
+  .resizer:hover::after, .resizer.dragging::after, .resizer:focus-visible::after { background: #001018; }
+
+  /* ===== 右メイン: プレビュー(中央・大きく) + 下の操作バー ===== */
+  .main { display: grid; grid-template-rows: 1fr 40px; min-width: 0; min-height: 0; }
+  .viewport { display: grid; place-items: center; min-height: 0; padding: 16px; background: var(--bg); }
+  /* 透明が分かる、控えめな市松模様(録画には入らない。見た目だけ) */
+  canvas { display: block; border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 8px 40px rgba(0,0,0,.5);
+    background-color: #262626;
+    background-image: linear-gradient(45deg, #303030 25%, transparent 25%, transparent 75%, #303030 75%),
+                      linear-gradient(45deg, #303030 25%, transparent 25%, transparent 75%, #303030 75%);
+    background-size: 20px 20px; background-position: 0 0, 10px 10px; }
+  .transport { display: flex; align-items: center; gap: 14px; padding: 0 14px; background: var(--panel); border-top: 1px solid var(--line); }
+  .transport #playBtn { width: 34px; padding: 5px 0; }
+  #timeLabel { color: var(--dim); font-variant-numeric: tabular-nums; }
+  #status { color: var(--accent); }
+  #debug { margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 画面が狭いとき(スマホなど)だけ、上下に積んでスクロールを許可 */
+  @media (max-width: 800px) {
+    body { overflow: auto; }
+    .app { flex-direction: column; height: auto; }
+    .sidebar { width: auto !important; min-width: 0; max-width: none; border-bottom: 1px solid var(--line); }   /* !important: ドラッグで付いた幅より優先する */
+    .resizer { display: none; }
+    .main { grid-template-rows: 60vh 40px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ===== 左サイドバー: すべての操作 ===== -->
+  <aside class="sidebar">
+    <div class="brand"><i></i>VISUAL TRANSLATOR</div>
+
+    <section class="card">
+      <h2>1 · INPUT / EXPORT</h2>
+      <div class="srcrow">
+        <label class="btn file" title="MP4 / MOV / WebM などの動画ファイル">動画ファイルを選択
+          <input type="file" id="fileInput" accept="video/*,.mov,.mkv,.avi,.webm,.mp4,.m4v">
+        </label>
+        <button id="demoBtn" type="button" title="動画ファイルがなくても、内蔵のテスト映像ですぐ試せます">▶ DEMO映像を再生</button>
+      </div>
+      <span id="fileName"></span>
+      <div class="src" id="srcBox">
+        <button class="toggle" id="srcToggle" type="button">元動画プレビュー（表示/非表示）<kbd>V</kbd></button>
+        <video id="video" controls muted playsinline preload="auto"></video>
+      </div>
+      <div class="row3">
+        <button id="recBtn" disabled>● REC<kbd>R</kbd></button>
+        <button id="stopBtn" disabled>■ STOP<kbd>R</kbd></button>
+        <button id="saveBtn" disabled>保存</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2 · PRESETS</h2>
+      <div class="presets">
+        <button class="preset" data-preset="decon" aria-pressed="false" title="情報のデジタル分解: ネオン色のASCII文字が崩れ、ところどころ抜け落ちる。細かい震えと、短い停止つき"><b>01. Digital Deconstruction</b><small>lilbesh ramko ｜ 情報のデジタル分解</small></button>
+        <button class="preset" data-preset="flow" aria-pressed="false" title="緩急と予測不能な歪み: 大きく震えるパズルが、頻繁に止まる。音連動もONになります"><b>02. Flow Distortion</b><small>Siero ｜ 緩急と予測不能な歪み</small></button>
+        <button class="preset" data-preset="memory" aria-pressed="false" title="記憶の残像と消滅: 淡いモノクロの図形が、長い尾を引きながら、まばらに消えていく"><b>03. Memory Fragment</b><small>テルコ ｜ 記憶の残像と消滅</small></button>
+        <button class="preset" data-preset="parallel" aria-pressed="false" title="現実と非現実の交差: サイバーグリーンのASCIIの中に、動く部分だけ実写が現れる"><b>04. Parallel World</b><small>kegøn ｜ 現実と非現実の交差</small></button>
+        <button class="preset" data-preset="emotion" aria-pressed="false" title="日常風景の感情変換: 実写を背景に残し、動く部分にだけ、やわらかい図形を重ねる"><b>05. Emotion Mapping</b><small>swetty ｜ 日常風景の感情変換</small></button>
+      </div>
+      <div class="shufrow">
+        <button class="shuffle" id="shuffleBtn" type="button" title="モード・色・パラメータを、気持ちよく壊れる範囲でランダムに組み替えます">🎲 SHUFFLE<kbd>S</kbd></button>
+        <button id="undoBtn" type="button" disabled title="直前のシャッフルの前の状態に戻す(最大20回前まで)">↩ UNDO<kbd>Z</kbd></button>
+      </div>
+      <div class="field"><span>⚡ AUTO SHUFFLE</span>
+        <label class="switch"><input type="checkbox" id="autoShuffle"><span></span></label></div>
+      <div class="field"><span>切り替え間隔</span>
+        <select id="autoInterval" title="再生中、この間隔で自動的にシャッフルします(一時停止中は止まります)">
+          <option value="1">1秒</option>
+          <option value="1.5">1.5秒</option>
+          <option value="2" selected>2秒</option>
+          <option value="3">3秒</option>
+          <option value="5">5秒</option>
+        </select></div>
+    </section>
+
+    <section class="card">
+      <h2>3 · MODE &amp; COLOR</h2>
+      <div class="field"><span class="lbl">描画モード<button class="lock" type="button" data-lock="drawMode"></button></span>
+        <select id="drawMode">
+          <option value="shape">SHAPE（図形）</option>
+          <option value="ascii">ASCII（文字）</option>
+          <option value="puzzle">PUZZLE（パズル）</option>
+          <option value="emoji">EMOJI（絵文字）</option>
+        </select></div>
+      <!-- モード切り替えのキー表示(いまのモードが水色になる) -->
+      <div class="keys">
+        <span data-mode="shape"><kbd>1</kbd>SHAPE</span>
+        <span data-mode="ascii"><kbd>2</kbd>ASCII</span>
+        <span data-mode="puzzle"><kbd>3</kbd>PUZZLE</span>
+        <span data-mode="emoji"><kbd>4</kbd>EMOJI</span>
+      </div>
+      <div class="field"><span>図形（SHAPE用）</span>
+        <select id="shapeType">
+          <option value="circle">円</option>
+          <option value="square">四角</option>
+        </select></div>
+      <div class="field"><span class="lbl">カラー<button class="lock" type="button" data-lock="colorMode"></button></span>
+        <select id="colorMode">
+          <option value="original">Original（元映像の色）</option>
+          <option value="neon">Neon Pink</option>
+          <option value="mono">Monochrome（淡いモノクロ）</option>
+          <option value="green">Cyber Green（サイバーグリーン）</option>
+          <option value="mask">Luminance Mask（白黒）</option>
+        </select></div>
+      <div class="field"><span class="lbl">実写ミックス<button class="lock" type="button" data-lock="realityMix"></button></span>
+        <select id="mixMode" title="実写の映像と、変換した図形・文字を、1つの画面に混ぜる設定">
+          <option value="convert">変換のみ（透過背景）</option>
+          <option value="realBg">実写背景＋動きだけ変換</option>
+          <option value="convertBg">変換背景＋動きだけ実写</option>
+        </select></div>
+      <div class="hint" id="mixHint"></div>
+      <div class="field"><span>輪郭強調（ソーベル）</span>
+        <label class="switch"><input type="checkbox" id="fxEdge" checked><span></span></label></div>
+      <div class="field"><span>動きリアクション（差分）</span>
+        <label class="switch"><input type="checkbox" id="fxMotion" checked><span></span></label></div>
+    </section>
+
+    <section class="card">
+      <h2 class="split"><span>4 · PARAMETERS</span><button class="linkbtn" id="lockAllSliders" type="button" title="スライダー7本の鍵を、まとめて切り替えます">全ロック</button></h2>
+      <div class="param" title="大きくすると粗いドット絵/アスキーアート風、小さくすると高精細になります">
+        <div class="phead"><span class="lbl"><label for="gridSlider">Grid Size</label><button class="lock" type="button" data-lock="grid"></button></span><output id="gridOut"></output></div>
+        <input type="range" id="gridSlider" min="8" max="40" step="1" value="16">
+      </div>
+      <div class="param" title="マスに対する図形・文字の大きさ。小さくすると余白が広がり、1つ1つの形が目立ちます">
+        <div class="phead"><span class="lbl"><label for="scaleSlider">Scale / Padding</label><button class="lock" type="button" data-lock="scale"></button></span><output id="scaleOut"></output></div>
+        <input type="range" id="scaleSlider" min="0.2" max="1.5" step="0.05" value="0.8">
+      </div>
+      <div class="param" title="大きくすると輪郭が出やすく、強調されます。0で輪郭強調なし">
+        <div class="phead"><span class="lbl"><label for="edgeSlider">Edge Sensitivity</label><button class="lock" type="button" data-lock="edge"></button></span><output id="edgeOut"></output></div>
+        <input type="range" id="edgeSlider" min="0" max="1" step="0.05" value="0.3">
+      </div>
+      <div class="param" title="動いている部分のランダムな揺れの強さ。0で揺れなし">
+        <div class="phead"><span class="lbl"><label for="jitterSlider">Jitter Amount</label><button class="lock" type="button" data-lock="jitter"></button></span><output id="jitterOut"></output></div>
+        <input type="range" id="jitterSlider" min="0" max="20" step="1" value="5">
+      </div>
+      <div class="param" title="一部のマスを描かずに透明に抜く割合。動いているマスは残りやすく、静止した背景ほど抜けます">
+        <div class="phead"><span class="lbl"><label for="decaySlider">Decay（情報の欠落率）</label><button class="lock" type="button" data-lock="decay"></button></span><output id="decayOut"></output></div>
+        <input type="range" id="decaySlider" min="0" max="90" step="1" value="0">
+      </div>
+      <div class="param" title="動く被写体の後ろに、図形や文字が尾を引いて残る強さ。0%で残像なし。背景は透明のまま保たれます">
+        <div class="phead"><span class="lbl"><label for="afterimageSlider">Afterimage（記憶の残像）</label><button class="lock" type="button" data-lock="afterimage"></button></span><output id="afterimageOut"></output></div>
+        <input type="range" id="afterimageSlider" min="0" max="95" step="1" value="0">
+      </div>
+      <div class="param" title="再生中、一定の確率で描画を数コマ止めて、コマ落ちのような「ひっかかり」を作ります。止まっている間も背景は透明のままです">
+        <div class="phead"><span class="lbl"><label for="stutterSlider">Stutter（瞬間フリーズ率）</label><button class="lock" type="button" data-lock="stutter"></button></span><output id="stutterOut"></output></div>
+        <input type="range" id="stutterSlider" min="0" max="80" step="1" value="0">
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>5 · AUDIO REACTIVE</h2>
+      <div class="field"><span>🎵 AUDIO REACTIVE</span>
+        <label class="switch"><input type="checkbox" id="audioReactive"><span></span></label></div>
+      <div class="param" title="大きいほど、低音のビートでJitter(震え)とDecay(欠落)が大きく跳ね上がります">
+        <div class="phead"><label for="audioSensSlider">Beat Sensitivity</label><output id="audioSensOut"></output></div>
+        <input type="range" id="audioSensSlider" min="0.5" max="3" step="0.1" value="1.5">
+      </div>
+      <div class="field"><span>低音レベル</span><div class="meter off"><i id="audioMeter"></i></div></div>
+      <div class="field"><span>🔊 音声を出す</span>
+        <label class="switch"><input type="checkbox" id="soundOn" checked><span></span></label></div>
+      <div class="hint" id="audioHint"></div>
+    </section>
+  </aside>
+
+  <!-- ===== 境界のハンドル: ドラッグで幅を変更 / ダブルクリックで初期幅に戻す ===== -->
+  <div id="resizer" class="resizer" role="separator" aria-orientation="vertical" tabindex="0"
+       aria-label="左パネルの幅" title="ドラッグで幅を調整（ダブルクリックで元に戻す）"></div>
+
+  <!-- ===== 右メイン: プレビュー + 再生バー ===== -->
+  <main class="main">
+    <div class="viewport" id="viewport">
+      <div class="notice" id="notice" role="alert" hidden>
+        <p id="noticeMsg"></p>
+        <small id="noticeDetail"></small>
+        <button id="noticeClose" type="button">閉じる</button>
+      </div>
+      <div class="rec-badge">● REC</div>
+      <canvas id="canvas" width="640" height="360"></canvas>
+    </div>
+    <div class="transport">
+      <button id="playBtn" disabled title="再生 / 一時停止">▶</button><kbd>Space</kbd>
+      <span id="timeLabel">0:00 / 0:00</span>
+      <span id="status">動画ファイルを選んでください</span>
+      <span id="debug"></span>
+    </div>
+  </main>
+</div>
+
+<script>
+// ===== 設定(ここを書き換えると見た目が変わる) =====
+// スライダーで変わる値はここに集める(初期値は、下のスライダー側の value と同じ)
+const params = {
+  grid:   16,    // グリッドサイズ(px)       … Grid Size
+  scale:  0.8,   // マスに対する大きさの倍率   … Scale / Padding
+  edge:   0.3,   // エッジ感度(0〜1)          … Edge Sensitivity
+  jitter: 5,     // 動きの揺れ(px)           … Jitter Amount
+  decay:  0,     // 情報の欠落率(%)          … Decay
+  afterimage: 0, // 記憶の残像(%)            … Afterimage
+  stutter: 0,    // 瞬間フリーズ率(%)         … Stutter / Freeze
+};
+const NEON_PINK = '#ff2bd6';   // ネオンピンクの色
+const PUZZLE_SHIFT  = 0.25;    // PUZZLE: 奇数行と偶数行を左右にずらす量(マスの大きさに対する割合)
+const PUZZLE_JITTER = 0.18;    // PUZZLE: ぶるぶる震える最大の量(同じく割合。0にすると震えない)
+const EDGE_THRESHOLD = 0.3;    // 輪郭強調: エッジ強度がこれを超えたマスを「輪郭」とみなす(0.0〜1.0)。感度スライダーが0.3のとき従来と同じ
+const EDGE_SCALE     = 600;    // エッジの強さの換算値。小さくするほど輪郭が出やすい
+const EDGE_SIZE_BOOST = 1.3;   // 輪郭のマスで、図形を何倍に大きくするか
+const MOTION_THRESHOLD = 0.2;  // 動き反応: 動き量がこれを超えたマスを「動いている」とみなす(0.0〜1.0)
+const CYBER_GREEN     = '#2dff8a';   // Cyber Greenの色
+const FREEZE_FRAME_MS  = 1000 / 30;   // 瞬間フリーズの「1コマ」の長さ(30fps換算 = 約33ミリ秒)
+const ALPHA_CUT      = 12;     // 残像: これより薄い(アルファ0〜255のうち12未満)カスは0にそうじする
+const TRAIL_CLEAN_EVERY = 5;   // 残像: そうじする間隔(フレーム数)
+const DECAY_HZ        = 8;      // Decay: 抜けるマスが入れ替わる速さ(1秒に何回)。大きいほどチカチカする
+const MOTION_GAIN    = 3;      // 動き量の増幅。大きくするほど小さな動きにも反応する
+// ASCIIモードの文字。左=薄い(暗い) → 右=濃い(明るい)。 : . → + = * → # W @ と、密度がはっきり違う文字を並べる
+const ASCII_RAMP = ' .:+=*#W@';
+const ANALYSIS_W = 320;        // 解析用canvasの幅(px)。解析(色・ソーベル・差分)は、この小さな画像で行う
+const MAX_LONG_SIDE = 960;     // 処理が重くならないよう、動画の長辺(横長なら幅、縦長なら高さ)をこの大きさ以下に縮小する
+
+// ===== 部品を取得 =====
+const video     = document.getElementById('video');
+const canvas    = document.getElementById('canvas');
+const mainCtx   = canvas.getContext('2d');                       // 画面・録画に出るcanvasの筆
+let   ctx       = mainCtx;                                       // いま描く先の筆。残像のときだけ、一時的に trail の筆に切り替える
+const work      = document.createElement('canvas');              // 作業用(画面には出さない)
+const wctx      = work.getContext('2d', { willReadFrequently: true });
+// 残像用の「透明な」作業キャンバス。変換した図形・文字だけをここに溜めて、少しずつ薄くする(画面には直接出さない)
+const trail     = document.createElement('canvas');
+const tctx      = trail.getContext('2d', { willReadFrequently: true });
+const statusEl  = document.getElementById('status');
+const debugEl   = document.getElementById('debug');
+const drawMode  = document.getElementById('drawMode');    // 描画モードのドロップダウン
+const fxEdge    = document.getElementById('fxEdge');      // 輪郭強調のON/OFF
+const fxMotion  = document.getElementById('fxMotion');    // 動きリアクションのON/OFF
+const mixMode   = document.getElementById('mixMode');     // 実写ミックスの選択
+const shapeType = document.getElementById('shapeType');   // 図形の種類(円/四角)
+const colorMode = document.getElementById('colorMode');   // カラーモードのドロップダウン
+const recBtn    = document.getElementById('recBtn');
+const stopBtn   = document.getElementById('stopBtn');
+const saveBtn   = document.getElementById('saveBtn');
+
+// ===== 調整スライダー =====
+// 停止中でも、設定を変えたら1回だけ描き直すための旗(true = 描き直したい)
+let needsRedraw = true;
+
+// スライダー1本を設定する: 動かす(inputイベント)たびに、params[key]を更新し、横の数値表示も更新する
+const sliderSetters = {};   // スライダーの名前 → 「値をセットする関数」(プリセットから呼ぶ)
+
+function bindSlider(sliderId, outId, key, unit, digits) {
+  const slider = document.getElementById(sliderId);
+  const out = document.getElementById(outId);
+  const update = () => {
+    params[key] = Number(slider.value);                       // 変数の値を更新 → 次の描画から反映
+    out.textContent = params[key].toFixed(digits) + unit;     // 現在の値を表示
+    needsRedraw = true;
+  };
+  // 人がスライダーを動かしたとき: 値を更新し、プリセットの選択を外す(手動の状態に戻る)
+  slider.addEventListener('input', () => { update(); setActivePreset(null); });
+  // プログラムから値を変えるとき(プリセット用): スライダーのつまみの位置・数値ラベル・内部の値を、まとめて更新する
+  sliderSetters[key] = (value) => { slider.value = value; update(); };
+  update();   // 最初の表示
+}
+bindSlider('gridSlider',   'gridOut',   'grid',   'px', 0);
+bindSlider('scaleSlider',  'scaleOut',  'scale',  '',   2);
+bindSlider('edgeSlider',   'edgeOut',   'edge',   '',   2);
+bindSlider('jitterSlider', 'jitterOut', 'jitter', 'px', 0);
+bindSlider('decaySlider',  'decayOut',  'decay',  '%',  0);
+bindSlider('afterimageSlider', 'afterimageOut', 'afterimage', '%', 0);
+bindSlider('stutterSlider',    'stutterOut',    'stutter',    '%', 0);
+
+// ===== プリセット: 現代音楽シーンの5つの表現アプローチ =====
+// 押すと、描画モード・カラー・実写ミックス・スライダー7本・音連動を、まとめて切り替える(ロック中の項目も含む)
+const PRESETS = {
+  decon: {   // 01. 情報のデジタル分解: ネオン色のASCIIが崩れて抜け落ちる
+    draw: 'ascii', shape: 'circle', color: 'neon', mix: 'convert', audio: false,
+    values: { grid: 16, scale: 0.85, edge: 0.5, jitter: 8, decay: 45, afterimage: 20, stutter: 15 },
+  },
+  flow: {    // 02. 緩急と予測不能な歪み: 大きな震え + 頻繁な停止 + 音連動
+    draw: 'puzzle', shape: 'circle', color: 'original', mix: 'convert', audio: true,
+    values: { grid: 22, scale: 0.9, edge: 0.3, jitter: 18, decay: 25, afterimage: 10, stutter: 50 },
+  },
+  memory: {  // 03. 記憶の残像と消滅: 淡いモノクロの図形が、長い尾を引いて消えていく
+    draw: 'shape', shape: 'circle', color: 'mono', mix: 'convert', audio: false,
+    values: { grid: 12, scale: 0.7, edge: 0.3, jitter: 4, decay: 55, afterimage: 80, stutter: 10 },
+  },
+  parallel: {// 04. 現実と非現実の交差: 変換背景(ASCII) + 動く部分だけ実写
+    draw: 'ascii', shape: 'circle', color: 'green', mix: 'convertBg', audio: false,
+    values: { grid: 14, scale: 0.8, edge: 0.4, jitter: 6, decay: 15, afterimage: 35, stutter: 20 },
+  },
+  emotion: { // 05. 日常風景の感情変換: 実写背景 + 動く部分だけ、やわらかい図形(輪郭は低め)
+    draw: 'shape', shape: 'circle', color: 'original', mix: 'realBg', audio: false,
+    values: { grid: 18, scale: 0.8, edge: 0.15, jitter: 5, decay: 10, afterimage: 50, stutter: 0 },
+  },
+};
+const presetButtons = document.querySelectorAll('.preset');
+
+// 指定したプリセットのボタンだけ光らせる(nullなら、全部消す = 手動の状態)
+function setActivePreset(name) {
+  presetButtons.forEach(btn => {
+    const on = btn.dataset.preset === name;
+    btn.classList.toggle('active', on);           // CSSの .active でハイライト
+    btn.setAttribute('aria-pressed', String(on));
+  });
+}
+
+function applyPreset(name) {
+  const p = PRESETS[name];
+  pushHistory();                                  // 変更の「前」の状態をUndo履歴に保存(Zキーで戻せる)
+  drawMode.value = p.draw;
+  shapeType.value = p.shape;
+  colorMode.value = p.color;
+  mixMode.value = p.mix;
+  // 輪郭強調と動きリアクションはONにしておく(実写ミックスの2つのモードは、動き・輪郭がないと何も起きないため)
+  fxEdge.checked = true;
+  fxMotion.checked = true;
+  applyAudioReactive(p.audio);
+  // スライダーごとに、つまみの位置・数値ラベル・内部の値(params)を更新する
+  for (const key in p.values) sliderSetters[key](p.values[key]);
+  setActivePreset(name);
+  syncModeLegend(); syncMixHint(); paintRanges();
+  needsRedraw = true;   // 停止中でも、すぐ描き直す。再生中なら次のフレームから反映される
+}
+presetButtons.forEach(btn => btn.addEventListener('click', () => applyPreset(btn.dataset.preset)));
+// ドロップダウンを人が直接変えたら、「プリセットそのまま」ではなくなるので、ハイライトを外す
+[drawMode, colorMode, mixMode, shapeType].forEach(el => el.addEventListener('change', () => setActivePreset(null)));
+
+// ドロップダウンやチェックボックスを変えたときも、停止中なら描き直す
+[drawMode, colorMode, shapeType, mixMode, fxEdge, fxMotion].forEach(el =>
+  el.addEventListener('change', () => { needsRedraw = true; }));
+
+// ===== 前のコマのピクセルデータ(動き検出で、今のコマと比べるために保存しておく) =====
+let prevFrameData = null;
+
+// ===== 1. 動画の読み込み(対応形式のチェックとエラー案内つき) =====
+// コーデック(映像の圧縮方式)がブラウザ未対応のときに出す案内
+const UNSUPPORTED_MSG = '※この動画のコーデック（形式）はブラウザで直接再生できません。H.264形式のMP4、またはWebMに変換してから再度読み込んでください。';
+const noticeEl = document.getElementById('notice');
+let currentUrl = null;      // 読み込み中の動画のURL(次の動画を選ぶときに片づける)
+let currentFile = null;
+let loadFailed = false;     // 失敗の案内を二重に出さないための旗
+
+// 画面上に案内を出す(プレビューの上の赤い枠 + 下のステータス)。読み込めない間は、再生・録画ボタンを無効にする
+function showNotice(message, detail) {
+  document.getElementById('noticeMsg').textContent = message;
+  document.getElementById('noticeDetail').textContent = detail || '';
+  noticeEl.hidden = false;
+  statusEl.textContent = '動画を読み込めませんでした';
+  recBtn.disabled = true;
+  document.getElementById('playBtn').disabled = true;
+}
+function hideNotice() { noticeEl.hidden = true; }
+document.getElementById('noticeClose').addEventListener('click', hideNotice);
+
+// 原因を調べやすいよう、ファイル名と形式を案内に添える
+function describeFile() {
+  if (!currentFile) return '';
+  const ext = (currentFile.name.match(/\.([^.]+)$/) || [, ''])[1].toLowerCase();
+  let text = `ファイル: ${currentFile.name}（${currentFile.type || '形式不明'}）`;
+  if (['mov', 'mkv', 'avi'].includes(ext)) {
+    text += ' / MOV・MKV・AVIは「入れ物」の名前で、中身のコーデック次第です(ProResや古いAVIなどは再生できません)';
+  }
+  return text;
+}
+
+// ファイルが選ばれたとき
+document.getElementById('fileInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  currentFile = file;
+  loadFailed = false;
+  hideNotice();                                              // 前の案内を消す
+  stopDemo();                                                // DEMO再生中なら終了して、選んだ動画ファイルに切り替える
+  recBtn.disabled = true;                                    // 読み込めると分かるまで、録画・再生は無効
+  document.getElementById('playBtn').disabled = true;
+  if (currentUrl) URL.revokeObjectURL(currentUrl);           // 前の動画のURLを片づける(メモリ節約)
+  currentUrl = URL.createObjectURL(file);                    // ローカルファイルを<video>用のURLにする
+  video.src = currentUrl;
+  statusEl.textContent = '読み込み中...';
+  resetTrail();                                              // 前の動画の残像を消す
+  prevFrameData = null;
+  needsRedraw = true;
+});
+
+// 動画の大きさなどが分かったとき
+video.addEventListener('loadedmetadata', () => {
+  if (!video.videoWidth || !video.videoHeight) {
+    // 映像の大きさが取れない = 音だけ読めて、映像のコーデックが未対応、というケースが多い
+    loadFailed = true;
+    showNotice(UNSUPPORTED_MSG, describeFile() + ' / 映像のサイズを取得できませんでした(音声だけ読み込めた可能性があります)');
+    return;
+  }
+  // 【自動フィット】長辺が上限を超えるときだけ縮小する。縦横比は保つ(縦長のiPhone動画・正方形・4Kも対応)
+  const scale = Math.min(1, MAX_LONG_SIDE / Math.max(video.videoWidth, video.videoHeight));
+  // 偶数にそろえる(動画の書き出しが安定するため)。最低でも2px
+  const w = Math.max(2, Math.round(video.videoWidth * scale) & ~1);
+  const h = Math.max(2, Math.round(video.videoHeight * scale) & ~1);
+  canvas.width = w;
+  canvas.height = h;
+  work.width = ANALYSIS_W;                                   // 解析用は幅320px固定(縦は縦横比を保つ)
+  work.height = Math.max(2, Math.round(ANALYSIS_W * h / w));
+  prevFrameData = null;
+  needsRedraw = true;
+  resetTrail();
+  recBtn.disabled = false;
+  statusEl.textContent = `準備OK（元 ${video.videoWidth}×${video.videoHeight} → 処理 ${w}×${h}）。Spaceで再生`;
+});
+
+// 再生位置をジャンプしたら、前のコマとは別の場面なので、比較用データを捨てる(巨大な「動き」を誤検出しない)
+video.addEventListener('seeked', () => { prevFrameData = null; resetTrail(); });   // 場面がジャンプしたら、残像も消す(録画の開始時もここを通る)
+
+// 読み込み失敗(未対応のコーデック・壊れたファイルなど)
+video.addEventListener('error', () => {
+  if (loadFailed || !currentFile) return;
+  loadFailed = true;
+  const code = video.error ? video.error.code : 0;
+  const reasons = { 1: '読み込みが中断されました', 2: 'ファイルの読み込みに失敗しました', 3: '映像のデコード(復号)に失敗しました', 4: 'この形式・コーデックには未対応です' };
+  const message = (code === 1 || code === 2) ? '動画を読み込めませんでした。ファイルを選び直してください。' : UNSUPPORTED_MSG;
+  showNotice(message, `${describeFile()} / ${reasons[code] || '原因不明'}（エラーコード ${code}）`);
+});
+
+// 読み込めたのに映像が出ないケース(HEVC/H.265など): 音は進むのに、映像のコマが1枚も表示されていないときに案内する
+video.addEventListener('timeupdate', () => {
+  if (loadFailed || demoActive || video.paused || video.currentTime < 0.7 || !video.getVideoPlaybackQuality) return;
+  if (video.getVideoPlaybackQuality().totalVideoFrames === 0) {
+    loadFailed = true;
+    stopRecording();                                         // 録画中なら止める(中身が空になるため)
+    video.pause();
+    showNotice(UNSUPPORTED_MSG, describeFile() + ' / 時間は進んでいますが、映像のコマが1枚も表示されていません(HEVC/H.265やProResなどで起こります)');
+  }
+});
+
+// ===== 2a. カラーモードごとに「色(fillStyle)」を決める(全描画モード共通) =====
+// mode = カラーモード名, r,g,b = そのマスの平均色(0〜255), motion = そのマスの動き量(0.0〜1.0)
+function getFillStyle(mode, r, g, b, motion) {
+  const moving = motion > MOTION_THRESHOLD;   // 【動き反応】動いているマスか?
+  switch (mode) {
+    case 'neon': return moving ? '#00f0ff' : NEON_PINK;     // 動いている所だけシアンに変わる
+    case 'mono': {                                          // 淡いモノクロ: 明るさだけのグレー(暗い所も真っ黒にならない淡さ)。動いている所は白
+      if (moving) return '#ffffff';
+      const v = (110 + (0.299 * r + 0.587 * g + 0.114 * b) * 0.57) | 0;
+      return `rgb(${v}, ${v}, ${v})`;
+    }
+    case 'green': return moving ? '#eafff3' : CYBER_GREEN;   // サイバーグリーン。動いている所だけ白っぽく光る
+    case 'mask': return '#ffffff';                          // マット用: 白のまま(色を変えるとマットが崩れる)
+    default:
+      // 動いている所は、元の色を4割残して、シアンを6割混ぜる(グリッチ風の色変化)
+      if (moving) return `rgb(${(r * 0.4) | 0}, ${(g * 0.4 + 144) | 0}, ${(b * 0.4 + 153) | 0})`;
+      return `rgb(${r | 0}, ${g | 0}, ${b | 0})`;            // 通常: そのマスの平均色
+  }
+}
+
+// 画像データの (x, y) にあるピクセルの輝度を返す道具。輝度 = (R+G+B)/3
+function lumAt(d, x, y, w) {
+  const p = (y * w + x) * 4;                 // このピクセルの先頭位置(R,G,B,Aの4つ組)
+  return (d[p] + d[p + 1] + d[p + 2]) / 3;
+}
+
+// ===== 2b. 解析: 画面をグリッドに分け、マスごとの色・明るさ・エッジ・動きを出す(全描画モード共通) =====
+// 解析は「幅320pxの小さな解析canvas」の画素で行う(出力canvasの全画素を読むと重いため)
+// data = 解析canvasのピクセル(aw×ah), w,h = 出力canvasの大きさ(マスは出力側の大きさで数える), prev = 前のコマ(なければ null)
+let cellsCache = null;      // マスの表。毎フレーム作り直さず、同じ配列を使い回す(GCの負荷を減らす)
+function getCells(cols, rows) {
+  const n = cols * rows;
+  if (!cellsCache || cellsCache.n !== n) {
+    cellsCache = { n, cols, rows, avg: 0,
+      r: new Float32Array(n), g: new Float32Array(n), b: new Float32Array(n),
+      lum: new Float32Array(n),     // 平均の明るさ
+      lumFx: new Float32Array(n),   // 輪郭で底上げした明るさ(描画にはこちらを使う)
+      edge: new Float32Array(n),    // エッジ強度 0.0〜1.0
+      motion: new Float32Array(n),  // 動き量 0.0〜1.0
+      L: new Float32Array(n),       // ソーベル用: マスごとの (R+G+B)/3
+      drop: new Uint8Array(n), draw: new Uint8Array(n), real: new Uint8Array(n) };   // planCells用
+  }
+  cellsCache.cols = cols; cellsCache.rows = rows;
+  return cellsCache;
+}
+
+function analyze(data, aw, ah, w, h, prev) {
+  const g = params.grid, cols = Math.ceil(w / g), rows = Math.ceil(h / g), n = cols * rows;
+  const cells = getCells(cols, rows);
+  const sx = aw / w, sy = ah / h;                      // 出力の座標 → 解析canvasの座標 への倍率
+  const useEdge = fxEdge.checked;
+  // 前のコマがあり、サイズが同じときだけ動きを計算する
+  const useMotion = fxMotion.checked && prev && prev.length === data.length;
+  if (!useEdge) cells.edge.fill(0);                    // 使い回している配列なので、使わないときは0に戻す
+  if (!useMotion) cells.motion.fill(0);
+  let total = 0;
+
+  for (let j = 0; j < rows; j++) {
+    const y0 = Math.min(ah - 1, Math.floor(j * g * sy));                          // このマスの、解析canvas上の範囲(最低1ピクセル)
+    const y1 = Math.max(y0 + 1, Math.min(ah, Math.floor((j + 1) * g * sy)));
+    for (let i = 0; i < cols; i++) {
+      const x0 = Math.min(aw - 1, Math.floor(i * g * sx));
+      const x1 = Math.max(x0 + 1, Math.min(aw, Math.floor((i + 1) * g * sx)));
+      // --- 色と明るさ: マス全体の平均 ---
+      let sumR = 0, sumG = 0, sumB = 0;
+      for (let y = y0; y < y1; y++) {
+        let p = (y * aw + x0) * 4;
+        for (let x = x0; x < x1; x++, p += 4) { sumR += data[p]; sumG += data[p + 1]; sumB += data[p + 2]; }
+      }
+      const count = (x1 - x0) * (y1 - y0);
+      const k = j * cols + i;
+      cells.r[k] = sumR / count; cells.g[k] = sumG / count; cells.b[k] = sumB / count;
+      // 明るさ: 人の目に合わせた重みつき計算(緑を強く、青を弱く見る)。0=黒 〜 255=白
+      cells.lum[k] = 0.299 * cells.r[k] + 0.587 * cells.g[k] + 0.114 * cells.b[k];
+      total += cells.lum[k];
+
+      // --- 【フレーム間差分】前のコマと比べて、明るさがどれだけ変わったか ---
+      // マスの中の9か所(3×3の格子状)だけを比べる(軽くするため)
+      if (useMotion) {
+        let diff = 0;
+        for (let sj = 0; sj < 3; sj++) {
+          for (let si = 0; si < 3; si++) {
+            // マスの 1/6, 3/6, 5/6 の位置。0〜(幅-1)に収める = 画面端で配列の外を読まない
+            const px = Math.min(aw - 1, Math.max(0, Math.floor((i * g + g * (si * 2 + 1) / 6) * sx)));
+            const py = Math.min(ah - 1, Math.max(0, Math.floor((j * g + g * (sj * 2 + 1) / 6) * sy)));
+            diff += Math.abs(lumAt(data, px, py, aw) - lumAt(prev, px, py, aw));   // |今の輝度 - 前の輝度|
+          }
+        }
+        cells.motion[k] = Math.min(1, (diff / 9 / 255) * MOTION_GAIN);   // 9か所の平均 → 0.0〜1.0
+      }
+    }
+  }
+
+  // --- 【ソーベルフィルタ】明るさが急に変わる場所(=輪郭)を探す ---
+  // マスごとの明るさ(R+G+B)/3 を並べた「表」に、3×3のソーベルをかける(ピクセルではなくマス単位 = 軽い)
+  if (useEdge) {
+    const L = cells.L;
+    for (let k = 0; k < n; k++) L[k] = (cells.r[k] + cells.g[k] + cells.b[k]) / 3;
+    // 表の外(画面の端)を読みそうなときは、いちばん端の値を使う = 範囲外を読まない
+    const at = (i, j) => L[Math.min(rows - 1, Math.max(0, j)) * cols + Math.min(cols - 1, Math.max(0, i))];
+    const gain = params.edge / EDGE_THRESHOLD;   // 感度スライダー。0.3で標準、大きいほど輪郭が出やすい、0なら輪郭なし
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const gx = (at(i + 1, j - 1) + 2 * at(i + 1, j) + at(i + 1, j + 1))
+                 - (at(i - 1, j - 1) + 2 * at(i - 1, j) + at(i - 1, j + 1));   // 左右の明るさの差(縦の線に反応)
+        const gy = (at(i - 1, j + 1) + 2 * at(i, j + 1) + at(i + 1, j + 1))
+                 - (at(i - 1, j - 1) + 2 * at(i, j - 1) + at(i + 1, j - 1));   // 上下の明るさの差(横の線に反応)
+        cells.edge[j * cols + i] = Math.min(1, Math.sqrt(gx * gx + gy * gy) / EDGE_SCALE * gain);   // 0.0〜1.0
+      }
+    }
+  }
+
+  // --- 【輪郭強調】輪郭のマスは明るさを底上げする(暗い所の輪郭も浮かび上がる) ---
+  for (let k = 0; k < n; k++) {
+    const e = cells.edge[k];
+    cells.lumFx[k] = e > EDGE_THRESHOLD ? Math.min(255, cells.lum[k] + 120 * e) : cells.lum[k];
+  }
+
+  cells.avg = total / n;   // 画面全体の平均の明るさ(動作確認用)
+  return cells;
+}
+
+// ===== 2b'. Decay(情報の欠落) と 実写ミックス: どのマスをどう扱うか決める =====
+// 同じ(マス番号, 時刻)なら必ず同じ 0〜1 の値を返す「ごちゃ混ぜ」関数(ランダムの代わり)。
+// Math.random() にしないのは、停止中に画面が勝手に変わったり、毎フレーム全部が入れ替わってノイズになるのを避けるため
+function hash01(a, b) {
+  let h = (Math.imul(a, 374761393) + Math.imul(b, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+// 各マスについて、次の3つのどれにするかを cells に書き込む
+//   cells.drop[k] = 1 → 欠落(何も描かず、透明に抜く)
+//   cells.draw[k] = 1 → 変換(図形・文字)で描く
+//   cells.real[k] = 1 → 実写の切り抜きで見せる
+// mix = 'convert'(変換のみ) / 'realBg'(実写背景+動きだけ変換) / 'convertBg'(変換背景+動きだけ実写)
+function planCells(cells, mix) {
+  const n = cells.cols * cells.rows;
+  cells.drop.fill(0); cells.draw.fill(0); cells.real.fill(0);   // 使い回している配列を、0に戻す
+  const decay = effectiveDecay / 100;                                    // 0〜0.9
+  const tick = Math.floor((video.currentTime || 0) * DECAY_HZ);       // 時間を区切った番号。これが変わると抜けるマスが入れ替わる
+
+  for (let k = 0; k < n; k++) {
+    const m = cells.motion[k];
+    const moving = m > MOTION_THRESHOLD;                               // 動いているマスか?
+
+    // --- Decay: 動きのあるマスは残しやすく、静止したマスほど decay の確率で抜く ---
+    if (decay > 0) {
+      // 守る度合い 0〜1: 動き量0.05以下(=ほぼ静止。カメラのノイズ程度)なら0、0.2以上なら1(=絶対に抜かない)
+      const protect = Math.min(1, Math.max(0, (m - 0.05) / (MOTION_THRESHOLD - 0.05)));
+      if (hash01(k, tick) < decay * (1 - protect)) { cells.drop[k] = 1; continue; }
+    }
+
+    // --- 実写ミックス ---
+    if (mix === 'realBg')         cells.draw[k] = moving ? 1 : 0;                              // 動いている所だけ変換を重ねる
+    else if (mix === 'convertBg') {
+      if (moving || cells.edge[k] > EDGE_THRESHOLD) cells.real[k] = 1;                         // 動き・輪郭のマスは実写
+      else cells.draw[k] = 1;                                                                  // それ以外は変換
+    } else cells.draw[k] = 1;                                                                  // 変換のみ
+  }
+}
+
+// 実写を背景に敷く(実写背景モード)。欠落したマスは透明に抜く
+function drawRealBase(cells, w, h) {
+  ctx.drawImage(video, 0, 0, w, h);                 // 実写は動画そのものから描く(解析用の小さなcanvasは使わない)
+  if (effectiveDecay > 0) {
+    const g = params.grid;
+    for (let j = 0; j < cells.rows; j++) {
+      for (let i = 0; i < cells.cols; i++) {
+        if (cells.drop[j * cells.cols + i]) ctx.clearRect(i * g, j * g, g, g);
+      }
+    }
+  }
+}
+
+// 動き・輪郭のマスに、実写の「そのマスの部分」だけを切り抜いて、同じ位置に描く(変換背景モード)
+function drawRealPatches(cells) {
+  const g = params.grid, w = canvas.width, h = canvas.height;
+  const kx = video.videoWidth / w, ky = video.videoHeight / h;   // 出力canvasの座標 → 動画の座標 への倍率
+  for (let j = 0; j < cells.rows; j++) {
+    for (let i = 0; i < cells.cols; i++) {
+      if (!cells.real[j * cells.cols + i]) continue;
+      const x = i * g, y = j * g;
+      const sw = Math.min(g, w - x), sh = Math.min(g, h - y);                  // 画面の端ではみ出さない
+      ctx.drawImage(video, x * kx, y * ky, sw * kx, sh * ky, x, y, sw, sh);                          // drawImage(元, 切り抜き位置とサイズ, 描く位置とサイズ)
+    }
+  }
+}
+
+// 全マスを順番に処理する小さな道具: fn(マス番号k, 中心のx, 中心のy)
+function eachCell(cells, fn, minLum = 0) {   // minLum: これより暗いマスは、すぐ飛ばす
+  for (let j = 0; j < cells.rows; j++) {
+    for (let i = 0; i < cells.cols; i++) {
+      const k = j * cells.cols + i;
+      if (cells.draw && !cells.draw[k]) continue;   // 欠落(Decay)のマスと、実写で見せるマスは、図形・文字を描かない
+      if (cells.lumFx[k] < minLum) continue;        // 暗すぎて描かないマスも、位置の計算などをする前に飛ばす
+      let cx = i * params.grid + params.grid / 2, cy = j * params.grid + params.grid / 2;
+      // 【動き反応】動いているマスだけ、位置を毎フレームランダムに数px震わせる(手振れ・ブレ感)
+      const m = cells.motion[k];
+      if (m > MOTION_THRESHOLD) {
+        const amp = effectiveJitter * (0.5 + m);              // 動きが大きいほど強く震える(最大値はスライダーで決まる)
+        cx += (Math.random() * 2 - 1) * amp;
+        cy += (Math.random() * 2 - 1) * amp;
+      }
+      fn(k, cx, cy);
+    }
+  }
+}
+
+// ===== 2c. 描画モードごとの描き方 =====
+// --- SHAPE: 明るいほど大きい図形。マスの中に必ず余白を残し、1つ1つを独立したシルエットにする ---
+function drawShape(cells, mode) {
+  // 図形の最大の半径 = マスの半分 × 倍率(スライダー)。0.8なら、マスの外側に10%ずつ余白ができる
+  const maxR = (params.grid * params.scale) / 2;
+  ctx.lineWidth = Math.max(1, params.grid / 16);                 // 輪郭線の太さ(グリッドに合わせる)
+  ctx.strokeStyle = mode === 'mask' ? '#000000' : 'rgba(0,0,0,0.5)';   // 輪郭線: 黒の半透明(図形の縁がくっきりする)
+
+  eachCell(cells, (k, cx, cy) => {
+    // 輪郭のマスは大きくするが、最大でも maxR×1.15 に抑えて、隣の図形と重なりすぎないようにする
+    const boost = cells.edge[k] > EDGE_THRESHOLD ? EDGE_SIZE_BOOST : 1;
+    const r = Math.min(maxR * 1.15, (cells.lumFx[k] / 255) * maxR * boost);
+    if (r < 1) return;                                           // ほぼ真っ黒のマスは描かない
+
+    ctx.beginPath();
+    if (shapeType.value === 'square') ctx.rect(cx - r, cy - r, r * 2, r * 2);   // 四角
+    else ctx.arc(cx, cy, r, 0, Math.PI * 2);                                    // 円
+    ctx.fillStyle = getFillStyle(mode, cells.r[k], cells.g[k], cells.b[k], cells.motion[k]);
+    ctx.fill();
+    if (r > 2.5) ctx.stroke();                                   // 輪郭線(小さすぎる図形は線で潰れるので省く)
+  }, 255 / (maxR * EDGE_SIZE_BOOST));   // これより暗いマスは、半径が1未満で描かないので、先に飛ばす
+}
+
+// --- ASCII: 明るさで文字を切り替える。文字の密度の差がはっきり出るようにする ---
+function drawAscii(cells, mode) {
+  // 文字サイズ = グリッド × 倍率 × 1.25。初期値(0.8)でちょうどグリッドと同じ大きさになる。
+  // 等幅フォントの文字は幅が高さの約6割なので、この大きさなら横にも縦にも文字が潰れない
+  const fontSize = Math.max(6, params.grid * params.scale * 1.25);
+  // 等幅フォント(monospace)を明示。最初に見つかったものが使われる
+  ctx.font = `bold ${fontSize}px "Courier New", Consolas, Menlo, monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  eachCell(cells, (k, cx, cy) => {
+    // コントラストを強める: 明るさ20以下は空白、220以上は最も濃い文字にして、間を引き伸ばす
+    const t = Math.min(1, Math.max(0, (cells.lumFx[k] - 20) / 200));
+    const ch = ASCII_RAMP[Math.round(t * (ASCII_RAMP.length - 1))];
+    if (ch === ' ') return;                                      // 空白は描かない
+    ctx.fillStyle = getFillStyle(mode, cells.r[k], cells.g[k], cells.b[k], cells.motion[k]);
+    ctx.fillText(ch, cx, cy);
+  }, 20 + 100 / (ASCII_RAMP.length - 1));   // これより暗いマスは、空白になるので先に飛ばす
+}
+
+// --- EMOJI: 明るさと色で絵文字を切り替える ---
+function drawEmoji(cells, mode) {
+  ctx.font = `${params.grid * params.scale * 1.25}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  eachCell(cells, (k, cx, cy) => {
+    const lum = cells.lumFx[k], r = cells.r[k], g = cells.g[k], b = cells.b[k];
+    let ch;
+    if (lum < 30)       return;                              // 暗い所は何も描かない
+    else if (mode === 'mask') ch = '✦';                      // マット用: 絵文字は色を指定できないので、白で塗れる文字だけ使う
+    else if (lum < 80)  ch = '⬛';                           // 暗め
+    else if (lum > 215) ch = '⬜';                           // かなり明るい
+    else if (r >= g && r >= b) ch = '⚡';                    // 中間の明るさ: 赤っぽい
+    else if (g >= b)           ch = '👾';                    //               緑っぽい
+    else                       ch = '✦';                     //               青っぽい
+    ctx.fillStyle = getFillStyle(mode, r, g, b, cells.motion[k]);             // ✦のような「文字」の絵文字にだけ効く
+    ctx.fillText(ch, cx, cy);
+  }, 30);   // 暗い所(明るさ30未満)は描かないので、先に飛ばす
+}
+
+// --- PUZZLE: ずれたパズルピースが、ぶるぶる震えながら並ぶ ---
+function drawPuzzle(cells, mode) {
+  const t = video.currentTime;                     // 動画の時間(震えの動きのもとになる)
+  ctx.lineWidth = 1;
+  ctx.lineJoin = 'round';
+  // ピースの輪郭線の色。マットのときは、背景と同じ黒でピースの境目を作る
+  ctx.strokeStyle = mode === 'mask' ? '#000000' : 'rgba(0,0,0,0.55)';
+
+  eachCell(cells, (k, cx, cy) => {
+    const lum = cells.lumFx[k];
+    if (lum < 20) return;                          // ほぼ真っ黒のマスはピースを置かない
+
+    // 【効果1】奇数行は右へ、偶数行は左へずらす(レンガのような段差ができる)
+    const row = Math.floor(k / cells.cols);
+    const shift = (row % 2 === 0 ? -1 : 1) * params.grid * PUZZLE_SHIFT;
+
+    // 【効果2】ピースごとに、位置をわずかに震わせる(ジッター)
+    // sin/cosに「時間t」と「マス番号k」を入れる → マスごとにバラバラ、かつ時間でなめらかに動く
+    // 暗いピースほど大きく震える(崩れ感)。毎回ランダムにしないのは、ちらつきを避けるため
+    const amp = params.grid * PUZZLE_JITTER * (1.3 - lum / 255);
+    const dx = Math.sin(t * 7 + k * 12.9898) * amp;
+    const dy = Math.cos(t * 6 + k * 78.233) * amp;
+
+    // ピースの大きさ: 明るいほどマスいっぱい、暗いほど小さい(すき間ができる)
+    const size = Math.max(2, params.grid * params.scale * 1.25 * (0.55 + 0.45 * lum / 255) - 1);   // 倍率(スライダー)に対応
+    const x = cx + shift + dx - size / 2;
+    const y = cy + dy - size / 2;
+
+    // 四角いピース + つなぎ目の丸い出っ張り(右か下。マス番号で交互に決める)
+    const kr = size * 0.2;
+    ctx.beginPath();
+    ctx.rect(x, y, size, size);
+    if (k % 2 === 0) {
+      ctx.moveTo(x + size + kr, y + size / 2);                 // 右の出っ張り
+      ctx.arc(x + size, y + size / 2, kr, 0, Math.PI * 2);
+    } else {
+      ctx.moveTo(x + size / 2 + kr, y + size);                 // 下の出っ張り
+      ctx.arc(x + size / 2, y + size, kr, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = getFillStyle(mode, cells.r[k], cells.g[k], cells.b[k], cells.motion[k]);
+    ctx.fill();
+    ctx.stroke();                                              // 輪郭線
+  }, 20);   // ほぼ真っ黒(明るさ20未満)のマスは、先に飛ばす
+}
+
+// 描画モード名 → 描き方 の対応表(モードを増やすときはここに足す)
+const RENDERERS = { shape: drawShape, ascii: drawAscii, emoji: drawEmoji, puzzle: drawPuzzle };
+
+// ===== 2c'. 記憶の残像(Afterimage): 背景の透明を壊さないやり方 =====
+// 【ポイント】半透明の黒を上から塗る方法は使わない(背景が黒くなり、透過書き出しができなくなるため)。
+// 代わりに 'destination-out' という合成モードで、「すでに描いた絵のアルファ(不透明度)」だけを少しずつ削る。
+// 変換した図形・文字は、画面とは別の透明キャンバス(trail)に溜めて薄くし、最後に画面へ重ねる。
+// こうすると、実写を背景に敷くモードでも「実写は毎フレーム描き直し、変換した図形だけ尾を引く」ことができる
+let trailUsed = false;     // trailを使ったか(残像を0%に戻したとき、古い残像を捨てるため)
+let trailFrame = 0;
+
+function drawWithTrail(cells, mix, mode, w, h) {
+  if (trail.width !== w || trail.height !== h) { trail.width = w; trail.height = h; }   // 大きさを画面に合わせる
+  trailUsed = true;
+
+  // (1) 残像キャンバスの絵を、少し薄くする
+  const fadeAlpha = 1.0 - params.afterimage / 100;      // 例: 残像80% → 0.2 → 毎フレーム20%ずつアルファを削る
+  tctx.save();                                          // 今の設定を保存
+  tctx.globalCompositeOperation = 'destination-out';   // 「塗った色の不透明度ぶんだけ、下の絵を透明にする」モード
+  tctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha.toFixed(3)})`;   // 色(黒)は関係ない。大事なのは不透明度だけ
+  tctx.fillRect(0, 0, w, h);
+  tctx.restore();                                       // 合成モードを普通(source-over)に戻す
+
+  // (2) 今のコマの図形・文字を、残像キャンバスに描き足す(描く先を一時的に切り替える)
+  ctx = tctx;
+  try { RENDERERS[drawMode.value](cells, mode); } finally { ctx = mainCtx; }
+
+  // (3) 数フレームに1回、ほぼ見えない薄いカスをそうじする
+  //     8ビットの丸めのせいで、ごく薄いアルファ(数%)が消えきらずに残ることがあり、透過書き出しの背景を汚すため
+  if (++trailFrame % TRAIL_CLEAN_EVERY === 0) cleanTrailResidue(w, h);
+
+  // (4) 画面のcanvasを組み立てる: 消す → (実写背景) → 残像 → (実写の切り抜き)
+  if (mode === 'mask') { ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, w, h); }   // マット用: 不透明な黒の上に、薄れていく白を重ねる
+  else ctx.clearRect(0, 0, w, h);                                                  // 通常: 透明に戻す
+  if (mix === 'realBg') drawRealBase(cells, w, h);      // 実写は残像にしない(毎フレーム描き直す)
+  ctx.drawImage(trail, 0, 0);                           // 残像つきの変換レイヤーを重ねる
+  if (mix === 'convertBg') drawRealPatches(cells);
+}
+
+// アルファがALPHA_CUT未満のピクセルを、完全な透明(0)にする
+function cleanTrailResidue(w, h) {
+  const img = tctx.getImageData(0, 0, w, h), d = img.data;
+  let changed = false;
+  for (let i = 3; i < d.length; i += 4) {               // 4つ目(A)だけ見る
+    if (d[i] > 0 && d[i] < ALPHA_CUT) { d[i] = 0; changed = true; }
+  }
+  if (changed) tctx.putImageData(img, 0, 0);
+}
+
+// 残像を使っていない間は、trailを空にしておく
+function releaseTrail() {
+  if (trailUsed) { tctx.clearRect(0, 0, trail.width, trail.height); trailUsed = false; }
+}
+
+// 残像をすべて消す(動画の読み込み・シーク・録画の終了のとき)。画面のcanvasも透明に戻す
+function resetTrail() {
+  tctx.clearRect(0, 0, trail.width, trail.height);
+  mainCtx.clearRect(0, 0, canvas.width, canvas.height);
+  trailUsed = false; trailFrame = 0;
+  needsRedraw = true;                                   // 停止中でも、今のコマを残像なしで描き直す
+}
+
+// ===== 2d. 1コマ分の変換 =====
+function drawFrame() {
+  const w = canvas.width, h = canvas.height;
+  const mode = colorMode.value;   // カラーモード('original' / 'neon' / 'mask')
+  updateEffective();   // 音連動のブーストを足した、いまの Jitter / Decay を計算する(スライダーの値そのものは変えない)
+
+  // (a) 動画の今のコマを作業用canvasに写し、全ピクセルの色を取り出す
+  const aw = work.width, ah = work.height;            // 解析用canvas(幅320px固定)の大きさ
+  wctx.drawImage(video, 0, 0, aw, ah);                // 動画を小さく縮小して写す
+  const data = wctx.getImageData(0, 0, aw, ah).data;  // [R,G,B,A, R,G,B,A, ...] の並び(出力canvasの約1/9の画素数)
+
+  // (b) 解析(全モード共通)
+  const cells = analyze(data, aw, ah, w, h, prevFrameData);   // 前のコマも渡して動きを調べる
+
+  // (c) どのマスを「変換で描く / 実写で見せる / 抜く(透明)」にするか決める(Decayと実写ミックス)
+  // マスクモードは白黒マットが目的なので、実写ミックスは使わず「変換のみ」として動かす
+  const mix = mode === 'mask' ? 'convert' : mixMode.value;
+  planCells(cells, mix);
+
+  if (params.afterimage > 0) {
+    // (d) 残像あり: 変換レイヤーだけを別キャンバスで薄めながら重ねる(上の drawWithTrail を参照)
+    drawWithTrail(cells, mix, mode, w, h);
+  } else {
+    // 残像なし(従来どおり): 毎フレーム、画面を完全に消してから描く
+    releaseTrail();
+    if (mode === 'mask') {
+      // マスクモード: 背景を不透明な黒で塗る(トラックマットは「黒=隠す/白=見せる」で、透明では使えない)
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, w, h);
+    } else {
+      // それ以外: 背景は塗らず透明に戻す(これでアルファが保たれる)
+      ctx.clearRect(0, 0, w, h);
+    }
+    if (mix === 'realBg') drawRealBase(cells, w, h);       // 実写背景: 先に実写を敷く(この間だけ背景は不透明)
+
+    // (e) 選ばれた描画モードで描く
+    RENDERERS[drawMode.value](cells, mode);
+    if (mix === 'convertBg') drawRealPatches(cells);       // 変換背景: 動き・輪郭のマスに実写を重ねる
+  }
+
+  // (f) 描き終わったら、今のコマを「前のコマ」として保存する(次のコマで動きを調べるため)
+  //     getImageDataは毎回新しい配列を返すので、コピーせず参照を持つだけでよい
+  prevFrameData = data;
+  return cells.avg;
+}
+
+// ===== 3. 毎フレーム繰り返す =====
+// 瞬間フリーズ: 残りのフリーズ時間(30fps換算のコマ数)。0より大きい間は、新しいコマを描かず、いまのcanvasをそのまま見せる
+let freezeCountdown = 0, freezeTick = 0, freezeRollTick = 0;
+let frameCount = 0;
+function loop() {
+  requestAnimationFrame(loop);   // 先に次の予約をする(エラーが出ても止まらないように)
+  if (video.readyState < 2) return;                   // 動画のコマが準備できていなければ何もしない
+  if (video.paused && !needsRedraw) return;           // 停止中は、設定が変わったときだけ描き直す
+  const forced = needsRedraw;                         // 設定の変更などで「いますぐ描き直したい」とき
+  needsRedraw = false;
+
+  // 【瞬間フリーズ(Stutter)】再生中だけ。コマ落ちのような「ひっかかり」を、一定の確率で起こす
+  if (forced) {
+    freezeCountdown = 0;                              // 描き直しのときは、止めずにすぐ描く
+  } else if (!video.paused) {
+    const now = performance.now();
+    if (freezeCountdown > 0) {
+      if (now - freezeTick >= FREEZE_FRAME_MS - 2) {  // 33ミリ秒ごとに1つ減らす(画面のリフレッシュ率に左右されない。-2は、タイミングの誤差の許容)
+        freezeCountdown--; freezeTick = now;
+        if (freezeCountdown === 0) freezeRollTick = now + FREEZE_FRAME_MS * 0.5;   // 終わった直後に次のフリーズが始まらないよう、抽選を少し遅らせる(最低1コマは動く)
+      }
+      return;                                         // 描画をスキップ = 直前のcanvas(背景の透明もそのまま)を見せ続ける
+    }
+    // フリーズしていないとき: 30fpsの1コマぶん(33ミリ秒)ごとに、1回だけ抽選する
+    if (params.stutter > 0 && now - freezeRollTick >= FREEZE_FRAME_MS - 2) {
+      freezeRollTick = now;
+      if (Math.random() < (params.stutter / 100) * 0.25) {         // 例: 50% → 1コマあたり12.5%の確率
+        freezeCountdown = Math.floor(Math.random() * 6) + 2;       // 2〜7コマ止める(約0.07〜0.23秒)
+        freezeTick = now;
+        return;                                                    // この回から止める
+      }
+    }
+  }
+  try {
+    const avg = drawFrame();
+    if (++frameCount % 15 === 0) {
+      debugEl.textContent = `映像 ${video.videoWidth}×${video.videoHeight} / 平均の明るさ ${avg | 0} (0=真っ黒, 255=真っ白)`;
+    }
+  } catch (err) {
+    statusEl.textContent = 'エラー: ' + err.message;
+    console.error(err);
+  }
+}
+loop();
+
+// ===== 4. 録画(canvas → 透過WebM) =====
+let recorder = null, chunks = [], recordedBlob = null;
+
+recBtn.addEventListener('click', () => {
+  const baseMime = 'video/webm;codecs=vp9';   // VP9はアルファ(透明)付きで録画できる
+  if (!window.MediaRecorder || !MediaRecorder.isTypeSupported(baseMime)) {
+    statusEl.textContent = 'VP9録画に未対応です。Chromeを使ってください';
+    return;
+  }
+  chunks = [];
+  // 映像: canvasの映像を60fpsのストリームとして取り出す
+  const videoStream = canvas.captureStream(60);
+  // 音声: 音のある動画のときだけ、音声トラックを映像に合流させる(DEMO・無音の動画は映像のみ)
+  const audioTracks = getRecordingAudioTracks();
+  const stream = audioTracks.length ? new MediaStream([...videoStream.getVideoTracks(), ...audioTracks]) : videoStream;
+  const mime = (audioTracks.length && MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) ? 'video/webm;codecs=vp9,opus' : baseMime;
+  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8000000, audioBitsPerSecond: 128000 });
+  recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+  recorder.onstop = () => {
+    recordedBlob = new Blob(chunks, { type: 'video/webm' });
+    saveBtn.disabled = false; recBtn.disabled = false; stopBtn.disabled = true;
+    statusEl.textContent = '録画完了。保存できます';
+  };
+  recorder.start();
+
+  video.currentTime = 0;   // 頭から再生し直して録画する
+  video.play();
+  recBtn.disabled = true; stopBtn.disabled = false; saveBtn.disabled = true;
+  statusEl.textContent = '● 録画中...';
+});
+
+function stopRecording() {
+  if (recorder && recorder.state === 'recording') { recorder.stop(); video.pause(); }
+}
+stopBtn.addEventListener('click', stopRecording);
+video.addEventListener('ended', stopRecording);   // 動画の最後で自動停止
+
+// ===== 5. 保存(ダウンロード) =====
+saveBtn.addEventListener('click', () => {
+  if (!recordedBlob) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(recordedBlob);
+  a.download = 'visual-translator.webm';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+// ===== UI用の追加処理(見た目まわり。描画・解析のロジックには影響しない) =====
+
+// 選んだファイル名を表示する
+document.getElementById('fileInput').addEventListener('change', (e) => {
+  document.getElementById('fileName').textContent = e.target.files[0] ? e.target.files[0].name : '';
+});
+
+// プレビューのcanvasを、右の領域いっぱいに(縦横比を保って)大きく表示する
+const viewport = document.getElementById('viewport');
+function fitCanvas() {
+  const r = viewport.getBoundingClientRect();
+  const aw = r.width - 32, ah = r.height - 32;                 // 余白16pxずつを引く
+  const scale = Math.min(aw / canvas.width, ah / canvas.height);
+  if (scale > 0) { canvas.style.width = canvas.width * scale + 'px'; canvas.style.height = canvas.height * scale + 'px'; }
+}
+new ResizeObserver(fitCanvas).observe(viewport);               // ウィンドウの大きさが変わったとき
+video.addEventListener('loadedmetadata', fitCanvas);           // 動画を読み込んでcanvasの比率が変わったとき
+fitCanvas();
+
+// 再生バー: 再生/一時停止ボタンと時間表示
+const playBtn = document.getElementById('playBtn');
+const timeLabel = document.getElementById('timeLabel');
+const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+const updateTime = () => {
+  const dur = isFinite(video.duration) ? fmt(video.duration || 0) : (demoActive ? 'DEMO' : '--:--');
+  timeLabel.textContent = `${fmt(video.currentTime || 0)} / ${dur}`;
+};
+playBtn.addEventListener('click', () => video.paused ? video.play() : video.pause());
+video.addEventListener('play',  () => { playBtn.textContent = '❚❚'; });
+video.addEventListener('pause', () => { playBtn.textContent = '▶'; });
+video.addEventListener('loadedmetadata', () => { if (video.videoWidth) playBtn.disabled = false; updateTime(); });
+video.addEventListener('timeupdate', updateTime);
+
+// スライダーの左側(つまみより左)を水色に塗る。--pct = つまみの位置(%)
+function paintRanges() {
+  document.querySelectorAll('input[type=range]').forEach(r =>
+    r.style.setProperty('--pct', ((r.value - r.min) / (r.max - r.min) * 100) + '%'));
+}
+document.addEventListener('input', paintRanges);                                // 手で動かしたとき
+document.querySelectorAll('.preset').forEach(b => b.addEventListener('click', paintRanges));   // プリセットで変わったとき
+paintRanges();
+
+// ===== キーボードショートカット =====
+//   Space: 再生/一時停止   1〜4: 描画モード   R: 録画の開始/停止   V: 元動画の表示/非表示
+const srcBox = document.getElementById('srcBox');
+
+// --- 各操作を「関数」にしておく(ボタンからもキーからも同じものを呼ぶ) ---
+function toggleSource() { srcBox.classList.toggle('collapsed'); }
+document.getElementById('srcToggle').addEventListener('click', toggleSource);
+
+function togglePlay() {
+  if (!video.videoWidth) return;                    // 動画が読み込まれていなければ何もしない
+  if (video.paused) {
+    needsRedraw = true;                             // 描画ループ(loop → drawFrame)も確実に動かす
+    video.play().catch(() => {});
+  } else {
+    video.pause();
+  }
+}
+
+// 描画モードを切り替える。select(ドロップダウン)の表示も一緒に変える
+function setDrawMode(mode) {
+  drawMode.value = mode;                            // 内部の値 + ドロップダウンの表示
+  setActivePreset(null);                            // プリセットそのままではなくなるので、ハイライトを外す
+  needsRedraw = true;                               // 停止中でもすぐ描き直す
+  syncModeLegend();
+}
+// 「1 SHAPE / 2 ASCII …」のうち、いまのモードだけ水色にする
+function syncModeLegend() {
+  document.querySelectorAll('.keys [data-mode]').forEach(el =>
+    el.classList.toggle('on', el.dataset.mode === drawMode.value));
+}
+drawMode.addEventListener('change', syncModeLegend);   // ドロップダウンを手で変えたときも連動
+syncModeLegend();
+
+// 録画の開始/停止。動画が読み込まれているときだけ動く
+function toggleRecording() {
+  if (!video.videoWidth) return;
+  if (recorder && recorder.state === 'recording') stopRecording();   // 録画中 → 停止
+  else if (!recBtn.disabled) recBtn.click();                        // それ以外 → RECボタンと同じ処理
+}
+
+// 録画中は、プレビュー枠を赤く光らせる(ボタンでもRキーでも、RECが押されたときに判定する)
+recBtn.addEventListener('click', () => {
+  if (recorder && recorder.state === 'recording') {
+    viewport.classList.add('recording');
+    recorder.addEventListener('stop', () => { viewport.classList.remove('recording'); resetTrail(); });   // 録画が終わったら、残像を消す
+  }
+});
+
+// 実写ミックスの説明を、いまの選択に合わせて表示する
+function syncMixHint() {
+  const text = {
+    convert:   '背景は透明のまま（WebMの透過書き出しに対応）。',
+    realBg:    '背景は実写（不透明）。動いているマスにだけ、図形・文字を重ねます。',
+    convertBg: '動き・輪郭のマスだけ実写を切り抜いて表示。ほかは図形・文字で、欠落した所は透明です。',
+  }[mixMode.value];
+  document.getElementById('mixHint').textContent = text +
+    (colorMode.value === 'mask' ? ' ※Luminance Mask中は「変換のみ」として動作します。' : '') +
+    (!fxMotion.checked && mixMode.value !== 'convert' ? ' ※「動きリアクション」がOFFだと動きを検出できません。' : '');
+}
+[mixMode, colorMode, fxMotion].forEach(el => el.addEventListener('change', syncMixHint));
+syncMixHint();
+
+// セレクトは、選んだあとにフォーカスを外す(残ったままだと、数字キーなどがセレクト側に取られるため)
+document.querySelectorAll('select').forEach(sel => sel.addEventListener('change', () => sel.blur()));
+
+// --- キーとモードの対応 ---
+const MODE_KEYS = { Digit1: 'shape', Digit2: 'ascii', Digit3: 'puzzle', Digit4: 'emoji',
+                    Numpad1: 'shape', Numpad2: 'ascii', Numpad3: 'puzzle', Numpad4: 'emoji' };
+
+// 文字を打つ欄(テキスト入力など)にフォーカスがあるか?  あるときはショートカットを無効にする
+// スライダー・スイッチ・ボタンなどは「文字を打つ欄」ではないので、操作直後でもSpaceが効く
+function isTyping(el) {
+  if (!el) return false;
+  if (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+  if (el.tagName === 'INPUT') return !['range', 'checkbox', 'radio', 'button', 'file', 'color'].includes(el.type);
+  return false;
+}
+
+window.addEventListener('keydown', (e) => {
+  // Ctrl+Z / Cmd+Z: アンドゥ(Shift付きのやり直しは対象外)。入力欄での文字のアンドゥは邪魔しない
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'KeyZ') {
+    if (!isTyping(document.activeElement)) { e.preventDefault(); undoShuffle(); }
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;       // Ctrl+R(再読み込み)など、ブラウザ自身のショートカットは邪魔しない
+  if (isTyping(document.activeElement)) return;         // 入力欄・セレクト操作中は無効(誤動作防止)
+
+  if (e.code === 'Space') {
+    if (e.target === video) return;                     // 動画自身にフォーカスがあるときは、動画の標準操作に任せる(二重に切り替わるのを防ぐ)
+    e.preventDefault();                                 // 画面スクロールや、フォーカス中ボタンの反応を止める
+    if (!e.repeat) togglePlay();                        // 押しっぱなしで連続切り替えしない
+    return;
+  }
+  if (e.repeat) return;
+  if (MODE_KEYS[e.code]) setDrawMode(MODE_KEYS[e.code]);
+  else if (e.code === 'KeyR') toggleRecording();
+  else if (e.code === 'KeyV') toggleSource();
+  else if (e.code === 'KeyS') shuffleParameters();      // S: シャッフル
+  else if (e.code === 'KeyZ') undoShuffle();            // Z: 1つ前のシャッフルに戻す
+});
+
+// Firefoxなどは、Spaceを「離した」ときにボタンを押した扱いにするので、こちらも止める
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'Space' && e.target !== video && !isTyping(document.activeElement)) e.preventDefault();
+});
+
+// ===== シャッフル: 「気持ちよく壊れる範囲」でランダムに組み替える =====
+const rand = (a, b) => a + Math.random() * (b - a);                          // a〜b の小数
+const randInt = (a, b) => Math.round(rand(a, b));                            // a〜b の整数
+const randStep = (a, b, step) => Math.round(Math.round(rand(a, b) / step) * step * 100) / 100;   // step刻み(0.05刻みなど)
+const pick = (list) => list[Math.floor(Math.random() * list.length)];        // 配列からランダムに1つ
+// 重みつき抽選: [[値, 重み], ...] から、重みに比例した確率で1つ選ぶ
+function pickWeighted(pairs) {
+  let r = Math.random() * pairs.reduce((sum, p) => sum + p[1], 0);
+  for (const [value, weight] of pairs) { if ((r -= weight) < 0) return value; }
+  return pairs[0][0];
+}
+
+// ===== ロック(鍵): ロックした項目は、シャッフルで変わらない =====
+// 注意: ロックは「シャッフルによる自動変更」を止めるだけ。人がドロップダウンやスライダーを直接動かすのは、いつでもできる
+const locks = { drawMode: false, colorMode: false, realityMix: false,
+                grid: false, scale: false, edge: false, jitter: false, decay: false, afterimage: false, stutter: false };
+const isLocked = (name) => locks[name];                                  // その項目はロックされているか?
+const SLIDER_LOCKS = ['grid', 'scale', 'edge', 'jitter', 'decay', 'afterimage', 'stutter'];
+
+// 鍵アイコン(SVG)。開いた鍵と閉じた鍵を両方入れておき、CSSの .locked で切り替える
+const LOCK_SVG =
+  '<svg class="i-open" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 5.8-1"/></svg>' +
+  '<svg class="i-closed" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>';
+
+const lockButtons = document.querySelectorAll('.lock');
+const lockAllBtn = document.getElementById('lockAllSliders');
+
+// ボタンの見た目を、いまのロック状態に合わせる
+function renderLock(btn) {
+  const on = locks[btn.dataset.lock];
+  btn.classList.toggle('locked', on);
+  btn.setAttribute('aria-pressed', String(on));
+  btn.title = on ? 'ロック中: シャッフルで変わりません(クリックで解除)' : 'クリックでロック: シャッフルで変わらなくなります';
+}
+// 「全ロック / 全解除」の表示: スライダーが全部ロック中なら「全解除」
+function syncLockAll() {
+  lockAllBtn.textContent = SLIDER_LOCKS.every(k => locks[k]) ? '全解除' : '全ロック';
+}
+lockButtons.forEach(btn => {
+  btn.innerHTML = LOCK_SVG;
+  renderLock(btn);
+  btn.addEventListener('click', () => {
+    locks[btn.dataset.lock] = !locks[btn.dataset.lock];                  // ON/OFFを切り替える
+    renderLock(btn);
+    syncLockAll();
+  });
+});
+lockAllBtn.addEventListener('click', () => {
+  const lockThem = !SLIDER_LOCKS.every(k => locks[k]);                   // 全部ロック済みなら全解除、そうでなければ全ロック
+  SLIDER_LOCKS.forEach(k => { locks[k] = lockThem; });
+  lockButtons.forEach(renderLock);
+  syncLockAll();
+});
+syncLockAll();
+
+// ===== シャッフル本体(SHUFFLEボタン・Sキー・AUTO SHUFFLEから呼ばれる) =====
+// ===== UNDO: シャッフルする直前の状態を保存しておき、1つずつ戻れるようにする =====
+const historyStack = [];          // 保存した状態(新しいものが末尾)
+const HISTORY_MAX = 20;           // 最大20件。超えたら古いものから捨てる
+const undoBtn = document.getElementById('undoBtn');
+
+// 今の状態をコピーして返す(描画モード・図形・カラー・実写ミックス・スライダー6本)
+function snapshot() {
+  return {
+    drawMode: drawMode.value, shapeType: shapeType.value, colorMode: colorMode.value, mixMode: mixMode.value,
+    params: { grid: params.grid, scale: params.scale, edge: params.edge, jitter: params.jitter, decay: params.decay, afterimage: params.afterimage, stutter: params.stutter },
+    fx: { edge: fxEdge.checked, motion: fxMotion.checked, audio: audioReactive.checked },   // プリセットが切り替えるスイッチ類
+  };
+}
+function pushHistory() {
+  historyStack.push(snapshot());
+  if (historyStack.length > HISTORY_MAX) historyStack.shift();   // 古いものを1つ捨てる
+  undoBtn.disabled = false;                                      // 履歴ができたので、押せるようにする
+}
+function undoShuffle() {
+  const snap = historyStack.pop();                               // 直前の状態を取り出す
+  if (!snap) return;                                             // 履歴が空なら何もしない
+  drawMode.value = snap.drawMode;                                // ドロップダウンの表示 + 内部の値
+  shapeType.value = snap.shapeType;
+  colorMode.value = snap.colorMode;
+  mixMode.value = snap.mixMode;
+  fxEdge.checked = snap.fx.edge; fxMotion.checked = snap.fx.motion; applyAudioReactive(snap.fx.audio);
+  for (const key in snap.params) sliderSetters[key](snap.params[key]);   // つまみ・数値ラベル・内部の値(params)
+  setActivePreset(null);           // どのプリセットの値かは分からないので、ハイライトは外す
+  syncModeLegend(); syncMixHint(); paintRanges();
+  needsRedraw = true;              // 停止中でも、すぐ描き直す
+  undoBtn.disabled = historyStack.length === 0;                  // 履歴が空になったら、また半透明に戻す
+}
+undoBtn.addEventListener('click', undoShuffle);
+
+function shuffleParameters() {
+  // 変わる項目が1つでもあるときだけ、変更の「前」の状態を保存する(全部ロック中は何も変わらないので保存しない)
+  if (!Object.values(locks).every(Boolean)) pushHistory();
+  // --- モード系: ロックされていない項目だけ変える ---
+  if (!isLocked('drawMode')) {
+    // いまのモード以外から選ぶ(押したのに変化なし、をなくす)
+    drawMode.value = pick(['shape', 'ascii', 'puzzle', 'emoji'].filter(m => m !== drawMode.value));
+    shapeType.value = pick(['circle', 'square']);   // SHAPEの形は描画モードの一部として扱う(描画モードがロック中なら変えない)
+  }
+  // 実写ミックスが「実写あり」でロックされているとき、白黒マットを選ぶと設定が食い違うので、マットは選ばない
+  const mixFixedOnReal = isLocked('realityMix') && mixMode.value !== 'convert';
+  if (!isLocked('colorMode')) {
+    // 白黒マット(背景が不透明な黒になる)は、透過素材を作りにくいので出にくくしている
+    colorMode.value = pickWeighted(mixFixedOnReal ? [['original', 35], ['neon', 25], ['green', 20], ['mono', 20]]
+                                                  : [['original', 30], ['neon', 25], ['green', 15], ['mono', 20], ['mask', 10]]);
+  }
+  if (!isLocked('realityMix')) {
+    // 透過の「変換のみ」を約60%にする
+    let mix = pickWeighted([['convert', 60], ['realBg', 20], ['convertBg', 20]]);
+    if (colorMode.value === 'mask') mix = 'convert';                       // マットは変換のみで動くので、表示も合わせる
+    if (!fxMotion.checked && mix === 'realBg') mix = 'convert';            // 動き検出がOFFだと、実写背景は何も重ならないので避ける
+    mixMode.value = mix;
+  }
+
+  // --- スライダー: 画面が消えたり潰れたりしない、安全な範囲。ロックされていないものだけ ---
+  const ranges = {
+    grid:       () => randInt(10, 32),
+    scale:      () => randStep(0.6, 1.2, 0.05),
+    edge:       () => randStep(0.1, 0.8, 0.05),
+    jitter:     () => randInt(0, 15),
+    decay:      () => randInt(0, 65),      // 上限65%: 高すぎると画面が消えてしまう
+    afterimage: () => randInt(0, 75),
+    stutter:    () => randInt(0, 45),      // 上限45%: 高すぎると止まってばかりになる
+  };
+  let slidersChanged = false;
+  for (const key in ranges) {
+    if (isLocked(key)) continue;                                           // ロック中は触らない
+    sliderSetters[key](ranges[key]());                                     // つまみ・数値ラベル・内部の値を、まとめて更新
+    slidersChanged = true;
+  }
+
+  // --- 画面の表示を同期 ---
+  // スライダーかモードが変わったので、プリセットのハイライトを外す(手動の状態に戻す)
+  if (slidersChanged || !isLocked('drawMode') || !isLocked('colorMode') || !isLocked('realityMix')) setActivePreset(null);
+  syncModeLegend();                // 「1 SHAPE / 2 ASCII …」の水色表示
+  syncMixHint();                   // 実写ミックスの説明文
+  paintRanges();                   // スライダーの水色の塗り
+  needsRedraw = true;              // 停止中でも、すぐ描き直す
+
+  if (Object.values(locks).every(Boolean)) statusEl.textContent = '全項目がロック中のため、シャッフルしても変わりません(鍵を外してください)';
+
+  const btn = document.getElementById('shuffleBtn');   // ぴかっと光らせる
+  btn.classList.add('flash');
+  setTimeout(() => btn.classList.remove('flash'), 140);
+}
+document.getElementById('shuffleBtn').addEventListener('click', shuffleParameters);
+
+// ===== AUTO SHUFFLE: 再生中だけ、一定間隔で自動シャッフル =====
+const autoShuffle = document.getElementById('autoShuffle');
+const autoInterval = document.getElementById('autoInterval');
+let autoElapsed = 0;                  // 再生中に経過した時間(ミリ秒)
+let autoLast = performance.now();
+setInterval(() => {
+  const now = performance.now(), dt = now - autoLast;
+  autoLast = now;
+  // OFFのとき、一時停止中、動画が未準備のときは、時間を進めない(=勝手に切り替わらない)
+  if (!autoShuffle.checked || video.paused || video.readyState < 2) return;
+  autoElapsed += dt;
+  if (autoElapsed >= Number(autoInterval.value) * 1000) { autoElapsed = 0; shuffleParameters(); }
+}, 100);
+autoShuffle.addEventListener('change', () => { autoElapsed = 0; });   // ONにした瞬間から数え直す
+
+// ===== DEMO映像: ファイルなしで試せる、内蔵のテスト映像 =====
+// 仕組み: オフスクリーンのcanvas(demoCanvas)に、踊る人影と光の粒子をリアルタイムで描き、
+//         そのcanvasの映像を captureStream() で <video> に流し込む。
+//         → 再生・一時停止・時間・読み取りが、動画ファイルのときと「同じ <video>」を通るので、
+//           解析(ソーベル・差分)・実写ミックス・録画・ショートカットは、そのまま同じように動く
+const DEMO_W = 640, DEMO_H = 360;
+const DEMO_REC_SECONDS = 12;                   // DEMOを録画するときは、この秒数で自動的に止める(動画ファイルの「最後まで」の代わり)
+const demoCanvas = document.createElement('canvas');
+demoCanvas.width = DEMO_W; demoCanvas.height = DEMO_H;
+const dctx = demoCanvas.getContext('2d');
+let demoActive = false, demoTime = 0, demoLast = 0, demoRaf = 0, demoStream = null, demoRecStart = null;
+
+// 光の粒子: 最初に1回だけ作る。毎フレームのランダムは使わず、時間tから位置を計算する(なめらかに動く)
+const demoParticles = (() => {
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  return Array.from({ length: 70 }, () => ({
+    ax: 40 + rnd() * 240, ay: 30 + rnd() * 130, fx: 0.3 + rnd() * 1.1, fy: 0.3 + rnd() * 1.1,
+    p: rnd() * 6.28, q: rnd() * 6.28, r: 1.5 + rnd() * 3.5, hue: [185, 320, 55, 270][Math.floor(rnd() * 4)],
+  }));
+})();
+
+// (x, y)から、長さlen・角度angの先の点。angは 0=真下, π/2=真横, π=真上
+const limbEnd = (x, y, len, ang) => [x + Math.sin(ang) * len, y + Math.cos(ang) * len];
+
+// 時刻tのときの、人影の関節の位置を計算する(描くのは別の関数。cx=横の位置, hipY=腰の高さ, s=大きさ)
+function figurePose(cx, hipY, s, t, phase) {
+  const sw = (k, o = 0) => Math.sin(t * k + phase + o);
+  const hip = [cx + sw(1.6) * 6 * s, hipY - Math.abs(sw(3.2)) * 7 * s];             // 足踏みで上下に弾む
+  const lean = sw(2.0) * 0.14;                                                        // 上体が左右に傾く
+  const shoulder = [hip[0] + Math.sin(lean) * 72 * s, hip[1] - Math.cos(lean) * 72 * s];
+  const head = [shoulder[0] + Math.sin(lean) * 28 * s, shoulder[1] - Math.cos(lean) * 28 * s];
+  const arms = [1, -1].map((side, i) => {                                             // 左右の腕: 下げたり、上に振り上げたり
+    const a = side * (0.5 + 1.2 * (sw(2.4, i * 2.1) + 1));
+    const elbow = limbEnd(shoulder[0], shoulder[1], 44 * s, a);
+    const hand = limbEnd(elbow[0], elbow[1], 40 * s, a + side * 0.8 * sw(4.1, i));   // 肘の曲げ
+    return [shoulder, elbow, hand];
+  });
+  const step = sw(3.2);
+  const legs = [1, -1].map((side) => {                                                // 左右の脚: 交互に足踏み
+    const ph = side * step;
+    const thigh = side * 0.14 + ph * 0.55;
+    const knee = limbEnd(hip[0], hip[1], 52 * s, thigh);
+    const foot = limbEnd(knee[0], knee[1], 52 * s, thigh - Math.max(0, -ph) * 0.9);  // 後ろに振るとき膝を曲げる
+    return [hip, knee, foot];
+  });
+  return { hip, shoulder, head, arms, legs };
+}
+
+// 関節の位置をつないで、太い線と丸でシルエットを描く
+function drawFigure(c, pose, s, color) {
+  c.save();
+  c.strokeStyle = color; c.fillStyle = color; c.lineCap = 'round'; c.lineJoin = 'round';
+  c.shadowColor = 'rgba(0, 212, 255, 0.6)'; c.shadowBlur = 16 * s;                     // ほんのり水色の光
+  c.lineWidth = 30 * s;                                                                // 胴体
+  c.beginPath(); c.moveTo(pose.hip[0], pose.hip[1]); c.lineTo(pose.shoulder[0], pose.shoulder[1]); c.stroke();
+  c.beginPath(); c.arc(pose.head[0], pose.head[1], 16 * s, 0, Math.PI * 2); c.fill();  // 頭
+  c.lineWidth = 13 * s;                                                                // 腕と脚
+  for (const limb of [...pose.arms, ...pose.legs]) {
+    c.beginPath(); c.moveTo(limb[0][0], limb[0][1]); c.lineTo(limb[1][0], limb[1][1]); c.lineTo(limb[2][0], limb[2][1]); c.stroke();
+  }
+  c.restore();
+}
+
+// デモ映像の1コマを描く(tは経過秒)
+function drawDemo(t) {
+  const c = dctx;
+  c.globalCompositeOperation = 'source-over';
+  const g = c.createLinearGradient(0, 0, 0, DEMO_H);                                   // 暗い紫のグラデーション背景
+  g.addColorStop(0, '#0d0b1f'); g.addColorStop(1, '#241040');
+  c.fillStyle = g; c.fillRect(0, 0, DEMO_W, DEMO_H);
+
+  c.globalCompositeOperation = 'lighter';                                              // 光の筋(ゆっくり揺れるだけ = ほぼ静止した背景)
+  const beams = ['rgba(0,212,255,0.07)', 'rgba(255,43,214,0.07)', 'rgba(255,220,120,0.05)'];
+  beams.forEach((color, i) => {
+    const bx = DEMO_W * (0.2 + 0.3 * i) + Math.sin(t * 0.25 + i * 2) * 60, drift = (i - 1) * 60;
+    c.fillStyle = color;
+    c.beginPath(); c.moveTo(bx - 8, 0); c.lineTo(bx + 8, 0); c.lineTo(bx + 90 + drift, DEMO_H); c.lineTo(bx - 90 + drift, DEMO_H); c.closePath(); c.fill();
+  });
+  c.globalCompositeOperation = 'source-over';
+
+  const far = figurePose(DEMO_W / 2 - 170 * Math.sin(t * 0.45 + 1), 238, 0.7, t, 1.9);   // 奥の小さな人(暗め)
+  drawFigure(c, far, 0.7, 'rgba(150, 130, 255, 0.85)');
+  const near = figurePose(DEMO_W / 2 + 150 * Math.sin(t * 0.45), 215, 1, t, 0);          // 手前の人(明るい。左右に歩きながら踊る)
+  drawFigure(c, near, 1, '#fff6ea');
+
+  c.globalCompositeOperation = 'lighter';                                              // 光の粒子(画面を飛び回る)
+  for (const q of demoParticles) {
+    const x = DEMO_W / 2 + q.ax * Math.sin(t * q.fx + q.p), y = DEMO_H / 2 + q.ay * Math.cos(t * q.fy + q.q);
+    c.fillStyle = `hsla(${q.hue}, 100%, 65%, 0.16)`; c.beginPath(); c.arc(x, y, q.r * 3, 0, Math.PI * 2); c.fill();   // にじみ
+    c.fillStyle = `hsla(${q.hue}, 100%, 75%, 0.95)`; c.beginPath(); c.arc(x, y, q.r, 0, Math.PI * 2); c.fill();       // 芯
+  }
+  c.globalCompositeOperation = 'source-over';
+}
+
+// デモのアニメーションを進め続ける
+function demoLoop(now) {
+  if (!demoActive) return;
+  demoRaf = requestAnimationFrame(demoLoop);
+  const dt = Math.min(100, now - demoLast);
+  demoLast = now;
+  if (!video.paused) demoTime += dt / 1000;      // 一時停止中は、デモの時間も止める(動画ファイルと同じ)
+  drawDemo(demoTime);
+  // 録画中は、DEMO_REC_SECONDS秒たったら自動で止める
+  if (demoRecStart !== null) {
+    if (!(recorder && recorder.state === 'recording')) demoRecStart = null;
+    else if (demoTime - demoRecStart >= DEMO_REC_SECONDS) { demoRecStart = null; stopRecording(); }
+  }
+}
+
+function startDemo() {
+  if (!demoCanvas.captureStream) {
+    showNotice('このブラウザは、内蔵のDEMO映像に対応していません。Chromeでお試しください。', '');
+    return;
+  }
+  stopDemo();                                                 // すでにDEMO中なら、いったん終了して最初から
+  hideNotice();
+  loadFailed = false;
+  currentFile = null;
+  document.getElementById('fileInput').value = '';           // 同じファイルをあとで選び直しても反応するように空にする
+  demoActive = true; demoTime = 0; demoLast = performance.now(); demoRecStart = null;
+  recBtn.disabled = true;                                     // 映像が届くまで、録画・再生は無効(届くと loadedmetadata で有効になる)
+  document.getElementById('playBtn').disabled = true;
+  prevFrameData = null;
+  resetTrail();
+  drawDemo(0);                                                // 最初の1コマを先に描いてから、ストリームにする
+  demoStream = demoCanvas.captureStream(30);                 // canvasの映像 → 30fpsのストリーム
+  video.srcObject = demoStream;                              // 動画ファイルの代わりに、これを再生する
+  video.play().catch(() => {});
+  document.getElementById('fileName').textContent = 'DEMO映像（内蔵）';
+  statusEl.textContent = 'DEMO映像を準備中...';
+  demoRaf = requestAnimationFrame(demoLoop);
+}
+
+// DEMOを終了する(動画ファイルを選んだとき、もう一度DEMOを押したときに呼ばれる)
+function stopDemo() {
+  if (!demoActive) return;
+  demoActive = false;
+  cancelAnimationFrame(demoRaf);
+  if (demoStream) { demoStream.getTracks().forEach(t => t.stop()); demoStream = null; }
+  video.pause();
+  video.srcObject = null;                                     // これを外さないと、あとで選んだ動画ファイルが再生されない
+  demoRecStart = null;
+}
+
+document.getElementById('demoBtn').addEventListener('click', startDemo);
+video.addEventListener('loadedmetadata', () => {
+  if (demoActive) statusEl.textContent = 'DEMO映像（内蔵）  Spaceで一時停止 / 再生';
+});
+// DEMOの録画は、デモの時間を0に戻して、頭から録画する(動画ファイルの「頭出し」の代わり)
+recBtn.addEventListener('click', () => {
+  if (demoActive && recorder && recorder.state === 'recording') { demoTime = 0; demoRecStart = 0; resetTrail(); }
+});
+
+// 一時停止や再生位置のジャンプのときは、フリーズを解除する
+video.addEventListener('pause', () => { freezeCountdown = 0; });
+video.addEventListener('seeked', () => { freezeCountdown = 0; });
+
+// ===== AUDIO REACTIVE: 低音(キック・ベース)に合わせて、JitterとDecayを一時的に跳ね上げる =====
+// 流れ: <video>の音 → AnalyserNode(周波数を測る) → GainNode(音量) → スピーカー
+//       測った低音の強さ(bassLevel)を、描画のときだけ Jitter / Decay に足す。スライダーの位置と値(params)は書き換えない
+const audioReactive = document.getElementById('audioReactive');
+const soundOn = document.getElementById('soundOn');
+const meterEl = document.getElementById('audioMeter');
+const audioHint = document.getElementById('audioHint');
+let isAudioInitialized = false;      // 初期化したか。createMediaElementSource は、同じ<video>に一生に1回しか呼べないので、二重に作らない旗
+let audioCtx = null, analyser = null, outGain = null, freqData = null, audioDest = null;
+let audioFailed = false;             // 音声の初期化に失敗した(その場合は「音量0」として動き続ける)
+let userVolume = 1;                  // 動画プレーヤー側で調整された音量(出力のGainに反映する)
+let audioSensitivity = 1.5;          // Beat Sensitivity
+let bassLevel = 0;                   // 低音の強さ 0.0〜1.0
+let effectiveJitter = 0, effectiveDecay = 0;   // 描画に実際に使う値(スライダーの値 + 音のブースト)
+let silentFrames = 0;
+
+// 初回の再生時に、1回だけ呼ばれる
+function initAudio() {
+  if (isAudioInitialized) return;
+  isAudioInitialized = true;         // 失敗しても、もう一度作り直さない
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) { audioFailed = true; return; }
+  try {
+    audioCtx = new AC();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;                       // 周波数の分解能。binの幅は サンプルレート÷512 (約94Hz)
+    analyser.smoothingTimeConstant = 0.5;         // 小さいほど、ビートの立ち上がりが速い
+    const source = audioCtx.createMediaElementSource(video);
+    outGain = audioCtx.createGain();              // スピーカーへの音量(「音声を出す」スイッチ用)
+    source.connect(analyser);
+    analyser.connect(outGain);
+    outGain.connect(audioCtx.destination);        // これを繋がないと、動画の音がスピーカーから出なくなる
+    audioDest = audioCtx.createMediaStreamDestination();   // 録画用の出口。「音声を出す」がOFFでも、AUDIO REACTIVEがOFFでも、音はここへ流れる
+    analyser.connect(audioDest);
+    freqData = new Uint8Array(analyser.frequencyBinCount);
+    video.muted = false;                          // 動画自身がミュートだと、解析にも無音が届くため、ミュートは外す
+    video.volume = 1;                             // 聞こえる大きさは、outGain側で調整する
+    applyOutputGain();
+  } catch (err) {
+    console.warn('音声解析を開始できませんでした(音量0として動きます):', err);
+    audioFailed = true;
+  }
+}
+function applyOutputGain() { if (outGain) outGain.gain.value = soundOn.checked ? userVolume : 0; }
+
+// ブラウザの自動再生ルール: 一時停止(suspended)のままだと音が出ないので、再生・操作のたびに再開させる
+function resumeAudio() { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {}); }
+// 録画に入れる音声トラックを返す。音がない場合(DEMO・無音の動画・音声を使えない環境)は、空の配列
+function getRecordingAudioTracks() {
+  if (demoActive) return [];                        // DEMOには音声がない
+  initAudio();                                      // 再生前にRECを押した場合でも、ここで初期化する(1回だけ)
+  resumeAudio();                                    // 一時停止(suspended)のままだと、無音が録画される
+  if (!audioDest) return [];
+  video.muted = false;                              // 動画自身がミュートだと、無音が届く
+  const noAudio = video.mozHasAudio === false
+    || (video.audioTracks && video.audioTracks.length === 0)
+    || (video.webkitAudioDecodedByteCount === 0 && video.currentTime > 0.5);   // 0.5秒以上再生したのに、音のデータが0 = 無音の動画
+  return noAudio ? [] : audioDest.stream.getAudioTracks();
+}
+video.addEventListener('play', () => { initAudio(); resumeAudio(); });
+window.addEventListener('pointerdown', resumeAudio, { passive: true });
+window.addEventListener('keydown', resumeAudio, { passive: true });
+
+// 低音の強さ(0〜1)を、毎フレーム測る
+function computeBass() {
+  let raw = 0;                                    // 音声がない・DEMO・解析できないときは 0(=音量0として安全に動く)
+  try {
+    if (isAudioInitialized && analyser && audioCtx.state === 'running' && !video.paused) {
+      analyser.getByteFrequencyData(freqData);    // 周波数ごとの強さ(0〜255)。先頭ほど低音
+      const binHz = audioCtx.sampleRate / analyser.fftSize;
+      const end = Math.max(2, Math.min(freqData.length - 1, Math.round(250 / binHz)));   // およそ0〜250Hz(キック・ベース)まで
+      let sum = 0;
+      for (let i = 0; i <= end; i++) sum += freqData[i];
+      raw = sum / (end + 1) / 255;                // 平均を0.0〜1.0にする
+    }
+  } catch (err) { raw = 0; }
+  // 立ち上がりは即座に、下がるときはゆっくり(ビートの余韻)
+  bassLevel = raw > bassLevel ? raw : bassLevel * 0.88;
+  if (bassLevel < 0.005) bassLevel = 0;
+}
+
+// 描画に使う値を計算する。音連動がOFFなら、スライダーの値そのまま
+function updateEffective() {
+  const boost = audioReactive.checked ? bassLevel * audioSensitivity : 0;
+  effectiveJitter = params.jitter + boost * 25;
+  // Decayは上限85%(画面が完全に消えないように)。ただし、スライダー自身の値より下がることはない
+  effectiveDecay = audioReactive.checked ? Math.max(params.decay, Math.min(85, params.decay + boost * 50)) : params.decay;
+}
+
+// レベルメーターと、状態の説明
+function audioHintText() {
+  if (audioFailed) return '音声解析を開始できませんでした。音量0として動作します。';
+  if (demoActive) return 'DEMO映像には音声がないため、音量0として動作します。';
+  if (!isAudioInitialized) return '動画を再生すると、低音の解析を始めます。';
+  if (audioCtx && audioCtx.state === 'suspended') return '画面をクリックすると、音の解析を始めます。';
+  if (silentFrames > 150) return '音が検出されていません（無音の動画、または音声トラックなし）。';
+  return audioReactive.checked ? '低音に合わせて、Jitter と Decay が跳ね上がります。' : '音連動はOFFです（メーターは測定中）。';
+}
+let meterShown = -1, hintTick = 0;
+function audioTick() {
+  requestAnimationFrame(audioTick);
+  computeBass();
+  const pct = Math.round(bassLevel * 100);
+  if (pct !== meterShown) { meterEl.style.width = pct + '%'; meterShown = pct; }
+  silentFrames = (!video.paused && bassLevel < 0.01) ? silentFrames + 1 : 0;
+  if (++hintTick % 15 === 0) audioHint.textContent = audioHintText();
+}
+requestAnimationFrame(audioTick);
+
+// --- UI ---
+// Beat Sensitivity: プリセットやシャッフルの対象外なので、専用の処理にしている(プリセットのハイライトも外さない)
+const sensSlider = document.getElementById('audioSensSlider');
+const sensOut = document.getElementById('audioSensOut');
+const updateSens = () => { audioSensitivity = Number(sensSlider.value); sensOut.textContent = audioSensitivity.toFixed(1); };
+sensSlider.addEventListener('input', updateSens);
+updateSens();
+// 音連動のON/OFFを、スイッチとメーターの表示にまとめて反映する(プリセット・UNDOからも使う)
+function applyAudioReactive(on) { audioReactive.checked = on; meterEl.parentElement.classList.toggle('off', !on); }
+audioReactive.addEventListener('change', () => applyAudioReactive(audioReactive.checked));
+soundOn.addEventListener('change', () => { if (soundOn.checked && userVolume === 0) userVolume = 1; applyOutputGain(); });
+
+// 動画プレーヤー(左上の元動画)のミュートや音量の操作: そのままだと解析にも無音が届くので、
+// 動画自身は常に「ミュートなし・音量最大」に戻し、操作内容は出力の音量(Gain)と「音声を出す」スイッチに反映する
+video.addEventListener('volumechange', () => {
+  if (!isAudioInitialized || (!video.muted && video.volume === 1)) return;
+  const v = video.muted ? 0 : video.volume;
+  video.muted = false; video.volume = 1;
+  userVolume = v;
+  soundOn.checked = v > 0;
+  applyOutputGain();
+});
+
+// ===== サイドバーの幅をドラッグで変える(リサイズハンドル) =====
+// 流れ: ハンドルを押す(isResizing=true) → マウスを動かす間、サイドバーの幅を更新 → 離す(isResizing=false)
+// マウスだけでなくタッチペン・指でも動くよう、pointerイベント(マウスのイベントの上位版)を使っている
+const sidebarEl = document.querySelector('.sidebar');
+const resizer = document.getElementById('resizer');
+const SIDEBAR_MIN = 280;            // 最小幅(px)
+const SIDEBAR_DEFAULT = 390;        // 標準の幅(ダブルクリックで戻る)
+const SIDEBAR_MAX_RATIO = 0.6;      // 最大幅 = 画面幅の60%
+let isResizing = false;
+
+// 幅を、最小〜最大の範囲に収めて(クランプ)、サイドバーに反映する
+function setSidebarWidth(px) {
+  const max = Math.max(SIDEBAR_MIN, window.innerWidth * SIDEBAR_MAX_RATIO);
+  const width = Math.min(max, Math.max(SIDEBAR_MIN, px));
+  sidebarEl.style.width = `${width}px`;
+  return width;
+}
+
+function startResize(e) {
+  if (e.button !== undefined && e.button !== 0) return;     // 左クリックだけ
+  isResizing = true;
+  resizer.setPointerCapture(e.pointerId);                    // ハンドルから外れても、動きを受け取り続ける
+  resizer.classList.add('dragging');                         // ドラッグ中は光らせる
+  document.body.style.userSelect = 'none';                   // ドラッグ中に文字が選択されて青くなるのを防ぐ
+  document.body.style.cursor = 'col-resize';                 // ハンドルから外れても、カーソルは左右矢印のまま
+  e.preventDefault();
+}
+function doResize(e) {
+  if (!isResizing) return;
+  // マウスのX座標 - サイドバーの左端 = サイドバーの新しい幅
+  setSidebarWidth(e.clientX - sidebarEl.getBoundingClientRect().left);
+}
+function endResize(e) {
+  if (!isResizing) return;
+  isResizing = false;
+  if (e && resizer.hasPointerCapture && resizer.hasPointerCapture(e.pointerId)) resizer.releasePointerCapture(e.pointerId);
+  resizer.classList.remove('dragging');
+  document.body.style.userSelect = '';                       // 元に戻す
+  document.body.style.cursor = '';
+}
+resizer.addEventListener('pointerdown', startResize);
+document.addEventListener('pointermove', doResize);
+document.addEventListener('pointerup', endResize);
+document.addEventListener('pointercancel', endResize);
+resizer.addEventListener('dblclick', () => { setSidebarWidth(SIDEBAR_DEFAULT); });   // ダブルクリックで標準幅に戻す
+
+// キーボードでも調整できる(ハンドルにフォーカスして ← → : 16px、Shift: 48px、Home / Enter: 標準幅)
+resizer.addEventListener('keydown', (e) => {
+  const now = sidebarEl.getBoundingClientRect().width, step = e.shiftKey ? 48 : 16;
+  if (e.code === 'ArrowLeft') setSidebarWidth(now - step);
+  else if (e.code === 'ArrowRight') setSidebarWidth(now + step);
+  else if (e.code === 'Home' || e.code === 'Enter') setSidebarWidth(SIDEBAR_DEFAULT);
+  else return;
+  e.preventDefault();
+});
+</script>
+</body>
+</html>
